@@ -14,6 +14,7 @@ public:
     kStarlightAscii,
     kFlatMultiplicity,
     kInterface,
+    k1n1n
   };
   enum HadronicIntModel_t {
     kGlauber,
@@ -67,9 +68,6 @@ protected:
   TH2D* CreateHist2D(const char* name, const char* title,Int_t nBinsX, Double_t xMin, Double_t xMax, Int_t nBinsY, Double_t yMin, Double_t yMax, const char* xLabel, const char* yLabel, const char* zLabel);
   Int_t FromMatrixToVector(Int_t i, Int_t j);
   void  FromVectorToMatrix(Int_t index, Int_t &row, Int_t &col);
-  
-  void BuildTwoPhotonFluxModulationTable();
-  Double_t TwoPhotonFluxModulation(const Double_t VMmass, const Double_t VMrapidity); 
 
 private:
 

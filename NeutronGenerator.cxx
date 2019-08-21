@@ -25,7 +25,7 @@ ClassImp(NeutronGenerator)
 //_____________________________________________________________________________
 NeutronGenerator::NeutronGenerator()
   : TObject()
-  , fRunMode(kFlatMultiplicity)
+  , fRunMode(kInterface)
   , fHadronicIntModel(kGlauber)
   , iEvent(0)
   , hInputRapidity(NULL)
@@ -135,18 +135,20 @@ void NeutronGenerator::SetRunMode(RunMode_t mode,const char *filename, const cha
     }
    if(fRunMode == kFlatMultiplicity){}
    if(fRunMode == kInterface){}
+   if(fRunMode == k1n1n){}
 }
 //______________________________________________________________________________
 void NeutronGenerator::Setup(){
 
  fParticles = new TClonesArray("TParticle", 200);
-  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity){
+  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity || fRunMode == k1n1n){
     fEventTree = new TTree("fEventTree", "fEventTree");
     fEventTree ->Branch("fParticles", &fParticles);
     fParticles ->BypassStreamer();
     }
   if(fRunMode == kStarlightAscii){}
   if(fRunMode == kInterface){}
+  if(fRunMode == k1n1n){}
 }
 //______________________________________________________________________________
 void NeutronGenerator::Run(const UInt_t nEvents)
@@ -177,7 +179,7 @@ void NeutronGenerator::Run(const UInt_t nEvents)
 	}
       }
     
-    if(fRunMode == kFlatMultiplicity) photonK = -1;
+    if(fRunMode == kFlatMultiplicity || fRunMode == k1n1n) photonK = -1;
 
     GenerateEvent(photonK);
     FinishEvent();
@@ -187,12 +189,16 @@ void NeutronGenerator::Run(const UInt_t nEvents)
 //______________________________________________________________________________
 void NeutronGenerator::GenerateEvent(const Double_t photonK)
 {
-  hPhotonK->Fill(photonK);
+  if(fRunMode != kFlatMultiplicity && fRunMode != k1n1n)hPhotonK->Fill(photonK);
   Int_t nNeutronsBeam1 = 0, nNeutronsBeam2 = 0;
   
   if(fRunMode == kFlatMultiplicity){
     nNeutronsBeam1 = maxNeutrons*gRandom->Rndm(); 
     nNeutronsBeam2 = maxNeutrons*gRandom->Rndm();
+    }
+  else if(fRunMode == k1n1n){
+    nNeutronsBeam1 = 1; 
+    nNeutronsBeam2 = 1;
     }
   else{ 
     for(Int_t i = 0; i < maxNeutrons; i++){ 
@@ -225,12 +231,13 @@ Double_t NeutronGenerator::GetBreakupProbability(const Double_t photonK, const I
 //______________________________________________________________________________
 Double_t NeutronGenerator::GetTotalFlux(const Double_t photonK)
 {
+cout<<photonK<<" "<<gPhotonFluxTable[0].Eval(photonK)<<endl;
   return gPhotonFluxTable[0].Eval(photonK);
 }
 //______________________________________________________________________________
 void NeutronGenerator::FinishProduction(){
 
-  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity || kStoreQA || kStoreGen)fOutputFile = new TFile("Output.root","RECREATE");
+  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity || fRunMode == k1n1n || kStoreQA || kStoreGen)fOutputFile = new TFile("Output.root","RECREATE");
   if(kStoreQA)fQAhistList->Write();
   if(kStoreGen){
     if(gNuclearThickness)gNuclearThickness->Write();
@@ -246,13 +253,13 @@ void NeutronGenerator::FinishProduction(){
     gUnitaryLeak->Write();
     
     }
-  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity) fEventTree->Write();
+  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity || fRunMode == k1n1n) fEventTree->Write();
   if(fOutputFile)fOutputFile->Close();  
 }
 //______________________________________________________________________________
 void NeutronGenerator::FinishEvent(){
   
-  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity)fEventTree ->Fill();
+  if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity || fRunMode == k1n1n)fEventTree ->Fill();
   if(fRunMode == kStarlightAscii){
     for(Int_t i=0; i< fParticles->GetEntriesFast(); i++)fOutputStarlightAscii<<"TRACK: "<<i+11<<" "<<
     							       ((TParticle*)fParticles->At(i))->Px()<<" "<<
@@ -868,9 +875,11 @@ void NeutronGenerator::Initialize()
     for(Int_t iBin = 1; iBin <= hSection_Nn[i].GetNbinsX(); iBin++)hSection_Nn[i].SetBinContent(iBin,gSection_Nn[i].Eval(hSection_Nn[i].GetBinCenter(iBin)));
     }
 
-  BuildHadronicInteractionProbabilityTable();
-  BuildNucleusBreakupProbabilityTable();
-  BuildPhotonFluxModulationTables();
+  if(fRunMode != kFlatMultiplicity && fRunMode != k1n1n){
+    BuildHadronicInteractionProbabilityTable();
+    BuildNucleusBreakupProbabilityTable();
+    BuildPhotonFluxModulationTables();
+    }
   InitQAhistograms();
 }
 
@@ -991,8 +1000,12 @@ void NeutronGenerator::InitQAhistograms(){
   fQAhistList->Add(hRapidityVM);
   hMassVM = CreateHist1D("hMassVM","Mass of VM used in event generation",1000,0,10,"Rapidity","Counts");
   fQAhistList->Add(hMassVM);
-  hPhotonK = CreateHist1D("hPhotonK","Virtual photon k=0.5*M_{VM}*exp(y_{VM}) used in event generation",nSteps_Energy-1,gPhotonFluxTable[0].GetX(),"k [GeV/c]","Counts");
-  fQAhistList->Add(hPhotonK);
+  
+  if(fRunMode != kFlatMultiplicity && fRunMode != k1n1n){
+    hPhotonK = CreateHist1D("hPhotonK","Virtual photon k=0.5*M_{VM}*exp(y_{VM}) used in event generation",nSteps_Energy-1,gPhotonFluxTable[0].GetX(),"k [GeV/c]","Counts");
+    fQAhistList->Add(hPhotonK);
+    }
+    
   hProbabilityXn = CreateHist1D("hProbabilityXn","Single side probability of Xn",1000,0,1,"Probability","Counts");
   fQAhistList->Add(hProbabilityXn);
 
@@ -1115,99 +1128,6 @@ void NeutronGenerator::ReadENDF(Bool_t saveToFile)
     fENDFFile->Close();
     }
 }
-//______________________________________________________________________________
-void NeutronGenerator::BuildTwoPhotonFluxModulationTable()
-{
-  Double_t mass_delta = TMath::Abs(fMassMax - fMassMin)/Double_t(15);
-  Double_t rapidity_delta = TMath::Abs(fRapMax - fRapMin)/Double_t(15);
-  
-  Int_t iStepM = 1;
-  Int_t iStepY = 1;
-  hTwoPhotonFluxModulationTable = new TH2D("hTwoPhotonFluxModulationTable","hTwoPhotonFluxModulationTable",15,fMassMin,fMassMax,15,fRapMin,fRapMax);
-  
-  cout<<"Building two photon flux modulation table"<<endl;  
-  for(Double_t mass_value = fMassMin; mass_value<=fMassMax; mass_value += mass_delta){
-    iStepY = 1;
-    for(Double_t rapidity_value = fRapMin; rapidity_value<=fRapMax; rapidity_value += rapidity_delta){
-      //hTwoPhotonFluxModulationTable->SetBinContent(iStepM,iStepY++,TwoPhotonFluxModulation(mass_value+mass_delta/2,rapidity_value+rapidity_delta/2));
-      //cout<<iStepM<<" "<<iStepY<<"M = "<<mass_value<<" Y = "<<rapidity_value<<" Modulation = "<<TwoPhotonFluxModulation(mass_value,rapidity_value)<<endl; 
-      
-      //if(Int_t((iStepM)/0.15)%10 == 0){
-      //if(iStepM != 1){ printf("\033[1A"); printf("\033[K");}   
-        //cout<<Int_t((iStepM)/0.15)<<"%"<<endl;
-        //}
-      }
-     iStepM++;
-     }
-  hTwoPhotonFluxModulationTable->Draw("COLZ");
-}
-//______________________________________________________________________________
-Double_t NeutronGenerator::TwoPhotonFluxModulation(const Double_t VMmass, const Double_t VMrapidity) 
-{
-/*/
-  Double_t energyPhoton1 =  VMmass/2.0*TMath::Exp(VMrapidity);
-  Double_t energyPhoton2 =  VMmass/2.0*TMath::Exp(-VMrapidity);
-
-  Double_t integral_Full = 0;
-  Double_t integral_FullMod = 0;
-  Double_t integral_Phi = 0;
-  Double_t integral_PhiMod = 0;
-  Double_t integral_Beam2 = 0;
-  Double_t integral_Beam2Mod = 0;
-  
-  Double_t impactPar_min=0.8*nucleus_R;
-  Double_t impactPar1_max=impactPar_min + 6.0*hbarc*beamGamma/energyPhoton1;  
-  Double_t impactPar2_max=impactPar_min + 6.0*hbarc*beamGamma/energyPhoton2;
-  Double_t impactPar1_delta=TMath::Exp(TMath::Log(impactPar1_max/impactPar_min)/Double_t(nSteps_GG));
-  Double_t impactPar2_delta=TMath::Exp(TMath::Log(impactPar2_max/impactPar_min)/Double_t(nSteps_GG));
-  
-  const int ngi = 5;
-  double weights[ngi] = {0.2955242247147529,0.2692667193099963,0.2190863625159820,0.1494513491505806,0.0666713443086881};
-  double abscissas[ngi] = {-0.1488743389816312, -0.4333953941292472, -0.6794095682990244, -0.8650633666889845, -0.9739065285171717};
-  
-  
-  for(Double_t impactPar1_value = impactPar_min; impactPar1_value<=impactPar1_max; impactPar1_value *= impactPar1_delta){
-    integral_Beam2 = 0; integral_Beam2Mod = 0;
-    for(Double_t impactPar2_value = impactPar_min; impactPar2_value<=impactPar2_max; impactPar2_value *= impactPar2_delta){
-      integral_Phi = 0; integral_PhiMod = 0;
-      for(Int_t k = 0; k < ngi; k++){
-        Double_t impactPar_diff = TMath::Sqrt(impactPar1_value*impactPar1_value+impactPar2_value*impactPar2_value + 2.*impactPar1_value*impactPar2_value*TMath::Cos(pi*(abscissas[k]+1)));
-	integral_PhiMod += weights[k]*NucleusBreakupProbability(impactPar_diff,-1)*gHadronicProbabilityTable->Eval(impactPar_diff);
-	integral_Phi += weights[k]*gHadronicProbabilityTable->Eval(impactPar_diff);
-	}
-      integral_Beam2 += integral_Phi*PhotonDensity(impactPar2_value,energyPhoton2)*2.0*pi*impactPar2_value*impactPar2_value*(1.0-1.0/impactPar2_delta);
-      integral_Beam2Mod += integral_PhiMod*PhotonDensity(impactPar2_value,energyPhoton2)*2.0*pi*impactPar2_value*impactPar2_value*(1.0-1.0/impactPar2_delta);
-      }
-    integral_Full += integral_Beam2*PhotonDensity(impactPar1_value,energyPhoton1)*2.0*pi*impactPar1_value*impactPar1_value*(1.0-1.0/impactPar1_delta);
-    integral_FullMod += integral_Beam2Mod*PhotonDensity(impactPar1_value,energyPhoton1)*2.0*pi*impactPar1_value*impactPar1_value*(1.0-1.0/impactPar1_delta);  
-    }
- 	
-  return integral_FullMod/integral_Full;
-  /*/ 
-}
-
-
-/*/
-if(fRunMode == kStarlightAscii){
-      TLorentzVector totgen, genpart;
-      totgen.SetXYZM(0.0,0.0,0.0,0.0);
-      std::string newLine;
-      do{ 
-        getline(fInputStarlightAscii,newLine);
-	lineString = newLine;
-	if(!lineString.Contains("EVENT"))fOutputStarlightAscii<<newLine<<endl;
-	if(lineString.Contains("TRACK")){ 
-          TObjArray *splitLine = lineString.Tokenize(" ");
-	  genpart.SetXYZM(((TObjString*)splitLine->At(2))->String().Atof(), ((TObjString*)splitLine->At(3))->String().Atof(),
-	  ((TObjString*)splitLine->At(4))->String().Atof(), pdgData.GetParticle(((TObjString*)splitLine->At(8))->String().Atoi())->Mass());
-	  totgen += genpart;
-	  } 
-	}while(!lineString.Contains("EVENT"));
-      VMmass = totgen.M();
-      VMrapidity = totgen.Rapidity();
-      }
-
-/*/
 //________________________________________________________________________
 TH1D* NeutronGenerator::CreateHist1D(const char* name, const char* title,Int_t nBins, Double_t xMin, Double_t xMax, const char* xLabel, const char* yLabel)
 {
