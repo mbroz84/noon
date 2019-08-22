@@ -1,4 +1,4 @@
-# A generator of forward neutrons for ultra-peripheral collisions: nOOn
+# A generator of forward neutrons for ultra-peripheral collisions
 
 ### Scope
 
