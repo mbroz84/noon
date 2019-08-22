@@ -231,7 +231,7 @@ Double_t NeutronGenerator::GetBreakupProbability(const Double_t photonK, const I
 //______________________________________________________________________________
 Double_t NeutronGenerator::GetTotalFlux(const Double_t photonK)
 {
-cout<<photonK<<" "<<gPhotonFluxTable[0].Eval(photonK)<<endl;
+
   return gPhotonFluxTable[0].Eval(photonK);
 }
 //______________________________________________________________________________
