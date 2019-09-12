@@ -17,3 +17,10 @@ This is an afterburner generator an input file with theory curves: one-arm coher
 See/Use run macro (runBreakup.C) to execute the generator. There are two sub-functions you may use:
 - runStandaloneGenerator(): This method by default runs generation of events based on the theory input. 
 - computeModelBreakups(): This method using the same theory input as in the previous method will produce the cross section predictions as on Fig.14 in the paper
+
+### Files:
+
+- ENDF_Pb208.txt: Input file with photo-neutron emission spectra for Pb208
+- ExampleTheory.root: Example file with theory prediction
+- NeutronGenerator.h .cxx: Generator class
+- runBreakup.C: ROOT macro to run the generator 
