@@ -35,7 +35,7 @@ void runStandaloneGenerator(){
   //gen->SetHadronicInteractionModel(NeutronGenerator::kHardSphere);
   gen->SetStoreQA();
   //gen->SetStoreGeneratorFunctions();
-  gen->SetRunMode(NeutronGenerator::kMassRapidity,"../../RhoTheory.root","massHist","histHS");
+  gen->SetRunMode(NeutronGenerator::kMassRapidity,"ExampleTheory.root","massHist","xSectionHist");
   //gen->SetRunMode(NeutronGenerator::k1n1n);
   gen->Initialize();
   gen->ReadENDF(kFALSE);
@@ -72,9 +72,9 @@ void computeModelBreakups(){
   //gen->LoadENDF(); 
   gen->Setup();
 
-  TFile *inputFile = new TFile("../../JPsiTheory.root","READ");
+  TFile *inputFile = new TFile("ExampleTheory.root","READ");
   TH1D *hInputMass = (TH1D*)inputFile->Get("massHist");
-  TH1D *hInputRapidity = (TH1D*)inputFile->Get("histHS_Jpsi");
+  TH1D *hInputRapidity = (TH1D*)inputFile->Get("xSectionHist");
 
   TString breakups[] = {"All","0n0n","Xn0n","XnXn"};
   TH1D *hRapidityBreakup[4];
@@ -86,7 +86,7 @@ void computeModelBreakups(){
   Double_t probLow[4];
   Double_t probHigh[4];
   
-  for(Int_t j=1; j<=41; j++)hInputRapidity->SetBinContent(j,hInputRapidity->GetBinContent(j)*gen->GetTotalFlux(0.5*3.09*TMath::Exp(hInputRapidity->GetBinCenter(j))));
+  //for(Int_t j=1; j<=41; j++)hInputRapidity->SetBinContent(j,hInputRapidity->GetBinContent(j)*gen->GetTotalFlux(0.5*3.09*TMath::Exp(hInputRapidity->GetBinCenter(j))));
   
   hInputRapidity->SetLineWidth(2);
   hInputRapidity->SetLineColor(kBlack);
@@ -145,7 +145,7 @@ void computeModelBreakups(){
   TCanvas *c3 = new TCanvas("c3","c3",0,0,800,800);
  
   c1->cd();  
-  hRapidityBreakup[0]->GetYaxis()->SetRangeUser(0,6);
+  hRapidityBreakup[0]->GetYaxis()->SetRangeUser(0,700);
   hRapidityBreakup[0]->DrawCopy();
   for(Int_t k=1; k<4; k++) hRapidityBreakup[k]->DrawCopy("same");
   gPad->SetGridy();gPad->SetGridx();
@@ -177,7 +177,7 @@ void computeModelBreakups(){
   noontitle->SetNDC();
   noontitle->SetTextFont(42);
   noontitle->SetTextSize(0.04);
-  noontitle->Draw();
+  //noontitle->Draw();
   
   TLegend *myLegend2 = new TLegend(0.42,0.29,0.69,0.48);
   myLegendSetUp(myLegend2,0.04,1);
