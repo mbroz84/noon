@@ -917,7 +917,7 @@ Double_t NeutronGenerator::HadronicInteractionProbability(const Double_t impactP
     Double_t energyCMS = 2*beamGamma*0.938; 
     // This equation is from section 50 of the particle data book, the subsection on "Total Hadronic Cross-Sections, using the parameterization for sqrt{s} > 7 GeV.
     // only the first and second terms contribute significantly, but leave them all here for good measure
-    Double_t xSection_IntNN = 0.1*0.2838*TMath::Power(TMath::Log(energyCMS),2)+33.73+13.67*TMath::Power(energyCMS,-0.412)-7.77*TMath::Power(energyCMS,-0.5626);
+    Double_t xSection_IntNN = 0.1*(0.2838*TMath::Power(TMath::Log(energyCMS),2)+33.73+13.67*TMath::Power(energyCMS,-0.412)-7.77*TMath::Power(energyCMS,-0.5626));
 
     Double_t maxDistance = nucleus_R+5.0;	
     Double_t RZ_delta = 0.01;
