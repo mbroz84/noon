@@ -4,7 +4,9 @@
 #include <string>
 
 // --- ROOT system ---
+#include <TSystem.h>
 #include "TGraph.h"
+#include "TGraph2D.h"
 #include "TMath.h"
 #include "TH1D.h"
 #include "TH2D.h"
@@ -22,34 +24,41 @@
 
 ClassImp(NeutronGenerator)
 
+using std::ios;
+using std::cout;
+using std::endl;
+
 //_____________________________________________________________________________
 NeutronGenerator::NeutronGenerator()
   : TObject()
   , fRunMode(kInterface)
   , fHadronicIntModel(kGlauber)
+  , fProductionMode(kPhotonPomeron)
+  , fNucleus(kPb208)
   , iEvent(0)
   , hInputRapidity(NULL)
   , hInputMass(NULL)
   , fRapMin(-666)
   , fRapMax(666)
-  , fMassMin(0)
+  , fMassMin(1)
   , fMassMax(666)
   , lineString(0)
+  , fDataPath("./Data/")
   , nFluxes(2+(maxNeutrons)*(maxNeutrons+1)/2)
   , nucleus_Z(82)
   , nucleus_A(208)
-  , beamGamma(2942)
+  , nucleus_R(6.624)
+  , beamGamma(0)
   , gammaTarget(2.0*beamGamma*beamGamma-1.0)
   , neutronSepThr(0.0)
   , saturationEnergy(1e6)
-  , gSection_Nn(NULL)
-  , hSection_Nn(NULL)
+  , gXsection(NULL)
+  , hXsection(NULL)
   , gPhotonFluxTable(NULL)
   , gNucleusBreakupTable(NULL)
-  , hTwoPhotonFluxModulationTable(NULL)
+  , gTwoPhotonFluxTable(NULL)
   , gNuclearThickness(NULL)
   , gHadronicProbabilityTable(NULL)
-  , hXsectionXn(NULL)
   , gMeanNeutronN(NULL)
   , gWidthNeutronN(NULL)
   , fitMeanNeutronN(NULL)
@@ -63,6 +72,7 @@ NeutronGenerator::NeutronGenerator()
   , fEventTree(NULL)
   , fParticles(NULL)
   , fOutputFile(NULL)
+  , fImpProfile(NULL) 
   , fQAhistList(NULL)
   , hNeutronMultiplicity(NULL)
   , hEnergyGen(NULL)
@@ -80,13 +90,9 @@ NeutronGenerator::NeutronGenerator()
   , hEnergyForNeutronMulti(NULL) 
   , hProbabilityXn(NULL) 
   , kStoreQA(kFALSE)
-  , kStoreGen(kFALSE) 
+  , kStoreGen(kFALSE)
 {
  // Default constructor
- for(Int_t i = 0; i<625; i++){
-   energyGamma_Xn[i] = 0.0;
-   xSection_Xn[i] = 0.0;
-   }
 }
 //_____________________________________________________________________________
 NeutronGenerator::~NeutronGenerator()
@@ -95,10 +101,9 @@ NeutronGenerator::~NeutronGenerator()
   if(hInputRapidity) {delete hInputRapidity; hInputRapidity = NULL;}
   if(hInputMass) {delete hInputMass; hInputMass = NULL;}
   if(gPhotonFluxTable) {delete gPhotonFluxTable; gPhotonFluxTable = NULL;}
-  if(hTwoPhotonFluxModulationTable) {delete hTwoPhotonFluxModulationTable; hTwoPhotonFluxModulationTable = NULL;}
+  if(gTwoPhotonFluxTable) {delete gTwoPhotonFluxTable; gTwoPhotonFluxTable = NULL;}
   if(gNuclearThickness) {delete gNuclearThickness; gNuclearThickness = NULL;}
   if(gHadronicProbabilityTable) {delete gHadronicProbabilityTable; gHadronicProbabilityTable = NULL;}
-  if(hXsectionXn) {delete hXsectionXn; hXsectionXn = NULL;} 
   if(gMeanNeutronN) {delete gMeanNeutronN; gMeanNeutronN = NULL;}
   if(gWidthNeutronN) {delete gWidthNeutronN; gWidthNeutronN = NULL;}
   if(fitMeanNeutronN) {delete fitMeanNeutronN; fitMeanNeutronN = NULL;}
@@ -110,6 +115,7 @@ NeutronGenerator::~NeutronGenerator()
   if(fParticles) {delete fParticles; fParticles = NULL;}
   if(fOutputFile) {delete fOutputFile; fOutputFile = NULL;}
   if(fQAhistList){delete fQAhistList; fQAhistList = NULL;}
+  
 }
 //______________________________________________________________________________
 void NeutronGenerator::SetRunMode(RunMode_t mode,const char *filename, const char *name1, const char *name2)
@@ -127,11 +133,11 @@ void NeutronGenerator::SetRunMode(RunMode_t mode,const char *filename, const cha
     }
     
   if(fRunMode == kStarlightAscii){
-    fInputStarlightAscii.open(filename);
-    std::string newLine;
-    getline(fInputStarlightAscii,newLine);
-    fOutputStarlightAscii.open(name1);
-    fOutputStarlightAscii<<newLine<<endl;
+    //fInputStarlightAscii.open(filename);
+    //std::string newLine;
+    //getline(fInputStarlightAscii,newLine);
+    //fOutputStarlightAscii.open(name1);
+    //fOutputStarlightAscii<<newLine<<endl;
     }
    if(fRunMode == kFlatMultiplicity){}
    if(fRunMode == kInterface){}
@@ -158,7 +164,7 @@ void NeutronGenerator::Run(const UInt_t nEvents)
   Double_t VMrapidity = 0;
   Double_t VMmass = 0;
   Double_t photonK = 0;
-  
+  //
   cout<<"Running production"<<endl; 
   for(iEvent = 0; iEvent<=nEvents; iEvent++){
     if(iEvent%(nEvents/10) == 0){
@@ -184,12 +190,16 @@ void NeutronGenerator::Run(const UInt_t nEvents)
     GenerateEvent(photonK);
     FinishEvent();
     }
+    //
   FinishProduction();
 }
 //______________________________________________________________________________
-void NeutronGenerator::GenerateEvent(const Double_t photonK)
+void NeutronGenerator::GenerateEvent(const Double_t photonK1, const Double_t photonK2)
 {
-  if(fRunMode != kFlatMultiplicity && fRunMode != k1n1n)hPhotonK->Fill(photonK);
+  if(fRunMode != kFlatMultiplicity && fRunMode != k1n1n){
+    hPhotonK->Fill(photonK1);
+    if(photonK2>0)hPhotonK->Fill(photonK2);
+    }
   Int_t nNeutronsBeam1 = 0, nNeutronsBeam2 = 0;
   
   if(fRunMode == kFlatMultiplicity){
@@ -200,39 +210,69 @@ void NeutronGenerator::GenerateEvent(const Double_t photonK)
     nNeutronsBeam1 = 1; 
     nNeutronsBeam2 = 1;
     }
-  else{ 
-    for(Int_t i = 0; i < maxNeutrons; i++){ 
-      for(Int_t j = i; j < maxNeutrons; j++){
-        if(i != j)hEventBreakupMap->SetBinContent(FromMatrixToVector(i,j)+1,2.0*GetBreakupProbability(photonK,i,j));
-	if(i == j)hEventBreakupMap->SetBinContent(FromMatrixToVector(i,j)+1,GetBreakupProbability(photonK,i,j));
-	}
+  else{
+    if(fProductionMode == kPhotonPomeron){ 
+      for(Int_t i = 0; i < maxNeutrons; i++){ 
+        for(Int_t j = i; j < maxNeutrons; j++){
+          if(i != j)hEventBreakupMap->SetBinContent(FromMatrixToVector(i,j)+1,2.0*GetBreakupProbability(photonK1,i,j));
+	  if(i == j)hEventBreakupMap->SetBinContent(FromMatrixToVector(i,j)+1,GetBreakupProbability(photonK1,i,j));
+	  }
+        }
+      }
+    if(fProductionMode == kTwoPhoton){
+      for(Int_t i = 0; i < maxNeutrons; i++){ 
+        for(Int_t j = i; j < maxNeutrons; j++){
+          if(i != j)hEventBreakupMap->SetBinContent(FromMatrixToVector(i,j)+1,2.0*GetBreakupProbability(photonK1,photonK2,i,j));
+          if(i == j)hEventBreakupMap->SetBinContent(FromMatrixToVector(i,j)+1,GetBreakupProbability(photonK1,photonK2,i,j));
+          }
+        }
       }
       
     Int_t randBin = hEventBreakupMap->FindBin(hEventBreakupMap->GetRandom())-1;
     FromVectorToMatrix(randBin,nNeutronsBeam1,nNeutronsBeam2);
     }
     
-    if(nNeutronsBeam1 != nNeutronsBeam2 && gRandom->Rndm()<0.5)CreateNeutrons(nNeutronsBeam2,nNeutronsBeam1);
-    else CreateNeutrons(nNeutronsBeam1,nNeutronsBeam2);
+  if(nNeutronsBeam1 != nNeutronsBeam2 && gRandom->Rndm()<0.5)CreateNeutrons(nNeutronsBeam2,nNeutronsBeam1);
+  else CreateNeutrons(nNeutronsBeam1,nNeutronsBeam2);
 }
 //______________________________________________________________________________
 Double_t NeutronGenerator::GetBreakupProbability(const Double_t photonK, const Int_t nNeutronsBeam1, const Int_t nNeutronsBeam2)
 {
-
-  Double_t probability = 0;
-  //cout<<gPhotonFluxTable[0].Eval(photonK)<<endl;
-  if(nNeutronsBeam1+nNeutronsBeam2 == -2)probability = gPhotonFluxTable[nFluxes-1].Eval(photonK)/gPhotonFluxTable[0].Eval(photonK);
-  if(nNeutronsBeam1+nNeutronsBeam2 == -1)probability = 1-gPhotonFluxTable[nFluxes-1].Eval(photonK)/gPhotonFluxTable[0].Eval(photonK)-
-  							 gPhotonFluxTable[FromMatrixToVector(0,0)+1].Eval(photonK)/gPhotonFluxTable[0].Eval(photonK);
-  if(nNeutronsBeam1 >= 0 && nNeutronsBeam2 >= 0) probability = gPhotonFluxTable[FromMatrixToVector(nNeutronsBeam1,nNeutronsBeam2)+1].Eval(photonK)/gPhotonFluxTable[0].Eval(photonK);
+  Double_t probability = 0;  
+  if(nNeutronsBeam1+nNeutronsBeam2 == -2) probability = gPhotonFluxTable[nFluxes-1].Eval(photonK);
+  if(nNeutronsBeam1+nNeutronsBeam2 == -1) probability = 1-gPhotonFluxTable[nFluxes-1].Eval(photonK)-gPhotonFluxTable[FromMatrixToVector(0,0)+1].Eval(photonK);
+  if(nNeutronsBeam1 >= 0 && nNeutronsBeam2 >= 0) probability = gPhotonFluxTable[FromMatrixToVector(nNeutronsBeam1,nNeutronsBeam2)+1].Eval(photonK);
   			   
   return probability;
 }
 //______________________________________________________________________________
-Double_t NeutronGenerator::GetTotalFlux(const Double_t photonK)
+Double_t NeutronGenerator::GetBreakupProbability(const Double_t photonK1, const Double_t photonK2, const Int_t nNeutronsBeam1, const Int_t nNeutronsBeam2, const Bool_t interpolate)
 {
 
-  return gPhotonFluxTable[0].Eval(photonK);
+  Double_t probability = 0;
+  if(interpolate){
+    if(nNeutronsBeam1+nNeutronsBeam2 == -2)probability = gTwoPhotonFluxTable[nFluxes-1].Interpolate(photonK1,photonK2);
+    if(nNeutronsBeam1+nNeutronsBeam2 == -1)probability = 1-gTwoPhotonFluxTable[nFluxes-1].Interpolate(photonK1,photonK2)-gTwoPhotonFluxTable[FromMatrixToVector(0,0)+1].Interpolate(photonK1,photonK2);
+    if(nNeutronsBeam1 >= 0 && nNeutronsBeam2 >= 0) probability = gTwoPhotonFluxTable[FromMatrixToVector(nNeutronsBeam1,nNeutronsBeam2)+1].Interpolate(photonK1,photonK2);
+    }
+  else{
+    Double_t* flux = TwoPhotonFlux(photonK1,photonK2);
+    
+    if(nNeutronsBeam1+nNeutronsBeam2 == -2) probability = flux[nFluxes-1];
+    if(nNeutronsBeam1+nNeutronsBeam2 == -1) probability = 1-flux[nFluxes-1]-flux[FromMatrixToVector(0,0)+1];
+    if(nNeutronsBeam1 >= 0 && nNeutronsBeam2 >= 0) probability = flux[FromMatrixToVector(nNeutronsBeam1,nNeutronsBeam2)+1];
+    delete [] flux; 
+    }
+		   
+  return probability;
+}
+
+//______________________________________________________________________________
+Double_t NeutronGenerator::GetTotalFlux(const Double_t photonK1, const Double_t photonK2)
+{
+  if(fProductionMode == kPhotonPomeron) return gPhotonFluxTable[0].Eval(photonK1);
+  if(fProductionMode == kTwoPhoton) return gTwoPhotonFluxTable[0].Interpolate(photonK1,photonK2);
+  return -666;
 }
 //______________________________________________________________________________
 void NeutronGenerator::FinishProduction(){
@@ -242,15 +282,22 @@ void NeutronGenerator::FinishProduction(){
   if(kStoreGen){
     if(gNuclearThickness)gNuclearThickness->Write();
     gHadronicProbabilityTable->Write();
-    hXsectionXn->Write(); 
-    gMeanNeutronN->Write();
-    gWidthNeutronN->Write();
+    for(Int_t i=0; i<=10; i++){
+      gXsection[i].SetName(Form("gXsection%d",i));
+      gXsection[i].Write(); 
+      }
     fitMeanNeutronN->Write();
     fitWidthNeutronN->Write();
     gNucleusBreakupTable[maxNeutrons].Write();
     for(Int_t i = 0; i<10; i++) gNucleusBreakupTable[i].Write();
     gUnitaryLeak->SetName("gUnitaryLeak");
     gUnitaryLeak->Write();
+    hBranchingRatioMap->Write();
+    
+    for(Int_t i=0; i<=9; i++){
+      fImpProfile[i].SetName(Form("fImpProfile%d",i));
+      fImpProfile[i].Write(); 
+      }
     
     }
   if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity || fRunMode == k1n1n) fEventTree->Write();
@@ -261,11 +308,11 @@ void NeutronGenerator::FinishEvent(){
   
   if(fRunMode == kMassRapidity || fRunMode == kFlatMultiplicity || fRunMode == k1n1n)fEventTree ->Fill();
   if(fRunMode == kStarlightAscii){
-    for(Int_t i=0; i< fParticles->GetEntriesFast(); i++)fOutputStarlightAscii<<"TRACK: "<<i+11<<" "<<
-    							       ((TParticle*)fParticles->At(i))->Px()<<" "<<
-    							       ((TParticle*)fParticles->At(i))->Py()<<" "<<
-							       ((TParticle*)fParticles->At(i))->Pz()<<" "<<iEvent+1<<" 0 0 "<<"2112"<<endl;
-    fOutputStarlightAscii<<lineString.Data()<<endl;
+    //for(Int_t i=0; i< fParticles->GetEntriesFast(); i++)fOutputStarlightAscii<<"TRACK: "<<i+11<<" "<<
+    							      // ((TParticle*)fParticles->At(i))->Px()<<" "<<
+    							      // ((TParticle*)fParticles->At(i))->Py()<<" "<<
+							      // ((TParticle*)fParticles->At(i))->Pz()<<" "<<iEvent+1<<" 0 0 "<<"2112"<<endl;
+    //fOutputStarlightAscii<<lineString.Data()<<endl;
     }
   fParticles->Clear("C");
 }
@@ -285,7 +332,7 @@ void NeutronGenerator::CreateNeutrons(const Int_t nNeutronsBeam1, const Int_t nN
   
     if(nNeutrons[side] == 0)continue;
     if(nNeutrons[side] <= 10){
-      energyPhoton = hSection_Nn[nNeutrons[side]-1].GetRandom();
+      energyPhoton = hXsection[nNeutrons[side]].GetRandom();
       energyBin = hENDF_2D->GetXaxis()->FindBin(energyPhoton);
       if(energyPhoton>140) energyBin--;
       hENDF_1D = hENDF_2D->ProjectionY("hENDF_1D",energyBin,energyBin);
@@ -330,12 +377,104 @@ void NeutronGenerator::CreateNeutrons(const Int_t nNeutronsBeam1, const Int_t nN
     }
 }
 //______________________________________________________________________________
+void NeutronGenerator::BuildTwoPhotonFluxModulationTables()
+{
+
+  Double_t energy_min = 0.5*fMassMin*TMath::Exp(-TMath::Max(TMath::Abs(fRapMin), TMath::Abs(fRapMax))); 
+  Double_t energy_max = 0.5*fMassMax*TMath::Exp(TMath::Max(TMath::Abs(fRapMin), TMath::Abs(fRapMax)));  
+  Double_t energy_delta = TMath::Exp(TMath::Log(energy_max/energy_min)/Double_t(nSteps_GG));
+  
+  Int_t iStep = 0;
+  
+  gTwoPhotonFluxTable = new TGraph2D[nFluxes];
+  gTwoPhotonFluxTable[0].SetName("gTwoPhotonFluxTable");
+  for(Int_t i = 0; i < maxNeutrons; i++){
+    for(Int_t j = i; j < maxNeutrons; j++){
+      gTwoPhotonFluxTable[FromMatrixToVector(i,j)+1].SetName(TString::Format("gTwoPhotonFluxTable%d%d",i,j));
+      }
+    }
+    
+  cout<<"Building two photon flux modulation table in range Mass = ("<<TString::Format("%.1f",fMassMin)<<","<<TString::Format("%.1f",fMassMax)<<") Rapidity = ("<<TString::Format("%.1f",fRapMin)<<","<<TString::Format("%.1f",fRapMax)<<")"<<endl;  
+  for(Double_t energy1_value = energy_min; energy1_value<=energy_max; energy1_value *= energy_delta){
+    for(Double_t energy2_value = energy_min; energy2_value<=energy_max; energy2_value *= energy_delta){
+      Double_t* flux = TwoPhotonFlux(energy1_value,energy2_value);
+      gTwoPhotonFluxTable[0].SetPoint(iStep,energy1_value,energy2_value,flux[0]);
+      //cout<<energy1_value<<" "<<energy2_value<<" "<<flux[nFluxes-1]<<endl;
+      for(Int_t i = 0; i < maxNeutrons; i++){
+        for(Int_t j = i; j < maxNeutrons; j++){
+          gTwoPhotonFluxTable[FromMatrixToVector(i,j)+1].SetPoint(iStep,energy1_value,energy2_value,flux[FromMatrixToVector(i,j)+1]);
+	  }
+        }
+      gTwoPhotonFluxTable[nFluxes-1].SetPoint(iStep,energy1_value,energy2_value,flux[nFluxes-1]);
+      delete [] flux;
+      iStep++;
+      if(iStep%12 == 0){
+        if(iStep > 12){ printf("\033[1A"); printf("\033[K");}   
+        cout<<Int_t(iStep/1.2)<<"%"<<endl;
+        }
+      }
+    }
+  for(Int_t iFlux=0; iFlux<nFluxes; iFlux++)gTwoPhotonFluxTable[iFlux].GetHistogram("empty");
+}
+//______________________________________________________________________________
+Double_t *NeutronGenerator::TwoPhotonFlux(const Double_t energyPhoton1, const Double_t energyPhoton2) 
+{
+  Double_t integral_Phi[nFluxes];
+  Double_t integral_Beam2[nFluxes];
+  Double_t diferential_Phi = 0;
+  Double_t diferential_Density = 0;
+  
+  Double_t *flux_integral = new Double_t[nFluxes];
+  for(Int_t iFlux=0; iFlux<nFluxes; iFlux++)flux_integral[iFlux] = 0.0;
+  Double_t breakupProb[maxNeutrons+1];
+  
+  Double_t impactPar_min=0.8*nucleus_R;
+  Double_t impactPar1_max=impactPar_min + 6.0*hbarc*beamGamma/energyPhoton1;  
+  Double_t impactPar2_max=impactPar_min + 6.0*hbarc*beamGamma/energyPhoton2;
+  Double_t impactPar1_delta=TMath::Exp(TMath::Log(impactPar1_max/impactPar_min)/Double_t(nSteps_GG));
+  Double_t impactPar2_delta=TMath::Exp(TMath::Log(impactPar2_max/impactPar_min)/Double_t(nSteps_GG));
+  
+  const int ngi = 5;
+  double weights[ngi] = {0.2955242247147529,0.2692667193099963,0.2190863625159820,0.1494513491505806,0.0666713443086881};
+  double abscissas[ngi] = {-0.1488743389816312, -0.4333953941292472, -0.6794095682990244, -0.8650633666889845, -0.9739065285171717};
+  
+  for(Double_t impactPar1_value = impactPar_min; impactPar1_value<=impactPar1_max; impactPar1_value *= impactPar1_delta){
+    for(Int_t iFlux=0; iFlux<nFluxes; iFlux++)integral_Beam2[iFlux] = 0;
+    
+    for(Double_t impactPar2_value = impactPar_min; impactPar2_value<=impactPar2_max; impactPar2_value *= impactPar2_delta){
+      for(Int_t iFlux=0; iFlux<nFluxes; iFlux++)integral_Phi[iFlux] = 0;
+      
+      for(Int_t k = 0; k < ngi; k++){
+        Double_t impactPar_diff = TMath::Sqrt(impactPar1_value*impactPar1_value+impactPar2_value*impactPar2_value + 2.*impactPar1_value*impactPar2_value*TMath::Cos(pi*(abscissas[k]+1)));
+	
+	for(Int_t i = 0; i < maxNeutrons+1; i++) breakupProb[i] = gNucleusBreakupTable[i].Eval(impactPar_diff);
+	
+	diferential_Phi = weights[k]*gHadronicProbabilityTable->Eval(impactPar_diff);
+	integral_Phi[0] += diferential_Phi;
+	integral_Phi[nFluxes-1] += diferential_Phi*breakupProb[maxNeutrons]*breakupProb[maxNeutrons];
+          for(Int_t i = 0; i < maxNeutrons; i++){
+            for(Int_t j = i; j < maxNeutrons; j++){
+              integral_Phi[FromMatrixToVector(i,j)+1] += diferential_Phi*breakupProb[i]*breakupProb[j];
+	      }
+	    }
+        }
+      diferential_Density = PhotonDensity(impactPar2_value,energyPhoton2)*2.0*pi*impactPar2_value*impactPar2_value*(1.0-1.0/impactPar2_delta);		      
+      for(Int_t iFlux=0; iFlux<nFluxes; iFlux++) integral_Beam2[iFlux] += integral_Phi[iFlux]*diferential_Density;
+      }
+    diferential_Density = PhotonDensity(impactPar1_value,energyPhoton1)*2.0*pi*impactPar1_value*impactPar1_value*(1.0-1.0/impactPar1_delta);  
+    for(Int_t iFlux=0; iFlux<nFluxes; iFlux++) flux_integral[iFlux] += integral_Beam2[iFlux]*diferential_Density;  
+    }
+    
+  for(Int_t iFlux=1; iFlux<nFluxes; iFlux++) flux_integral[iFlux] /= flux_integral[0];
+  return flux_integral; 
+}
+//______________________________________________________________________________
 void NeutronGenerator::BuildPhotonFluxModulationTables()
 {
   Double_t energy_min = 1e-5; 
   Double_t energy_max = 12.0 * beamGamma * hbarc/(2.0*nucleus_R);  
   Double_t energy_delta = TMath::Exp(TMath::Log(energy_max/energy_min)/Double_t(nSteps_Energy));
-  
+  energy_min *= energy_delta;
   Int_t iStep = 0;
   
   gPhotonFluxTable = new TGraph[nFluxes];
@@ -347,14 +486,15 @@ void NeutronGenerator::BuildPhotonFluxModulationTables()
     }
   cout<<"Building photon flux modulation tables"<<endl;  
   for(Double_t energy_value = energy_min; energy_value<=energy_max; energy_value *= energy_delta){
-    Double_t* flux = PhotonFlux(energy_value);
+    Double_t* flux = PhotonFlux(energy_value,kFALSE);
     gPhotonFluxTable[0].SetPoint(iStep,energy_value,energy_value*flux[0]);
     for(Int_t i = 0; i < maxNeutrons; i++){
       for(Int_t j = i; j < maxNeutrons; j++){
-        gPhotonFluxTable[FromMatrixToVector(i,j)+1].SetPoint(iStep,energy_value,energy_value*flux[FromMatrixToVector(i,j)+1]);
+        gPhotonFluxTable[FromMatrixToVector(i,j)+1].SetPoint(iStep,energy_value,flux[FromMatrixToVector(i,j)+1]);
 	}
       }
-    gPhotonFluxTable[nFluxes-1].SetPoint(iStep,energy_value,energy_value*flux[nFluxes-1]);
+    gPhotonFluxTable[nFluxes-1].SetPoint(iStep,energy_value,flux[nFluxes-1]);
+    delete [] flux;
     iStep++;
     if(iStep%10 == 0){
       if(iStep > 10){ printf("\033[1A"); printf("\033[K");}   
@@ -363,7 +503,7 @@ void NeutronGenerator::BuildPhotonFluxModulationTables()
    }
 }
 //______________________________________________________________________________
-Double_t *NeutronGenerator::PhotonFlux(const Double_t energyPhoton)
+Double_t *NeutronGenerator::PhotonFlux(const Double_t energyPhoton, const Bool_t printout)
 {
   Double_t flux_differential = 0.0;
   Double_t flux_differentialMod[nFluxes], flux_integralMod[nFluxes];
@@ -372,14 +512,17 @@ Double_t *NeutronGenerator::PhotonFlux(const Double_t energyPhoton)
   Double_t dist;
   Double_t breakupProb[maxNeutrons+1];
  
-  Double_t impactPar_min=1.8*nucleus_R;
+  Double_t impactPar_min=1.6*nucleus_R;
   Double_t impactPar_max=impactPar_min + 6.0*hbarc*beamGamma/energyPhoton;  //6.0*adiabatic cutoff energy
   
   Double_t impactPar_delta=TMath::Exp(TMath::Log(impactPar_max/impactPar_min)/Double_t(nSteps_impactPar));
   Double_t R_delta = nucleus_R/Double_t(nSteps_R);
   Double_t Phi_delta=pi/Double_t(nSteps_Phi);
-
+  
+  impactPar_min*=impactPar_delta;
+  Int_t nStep = 0;
   for(Double_t impactPar_value = impactPar_min; impactPar_value<=impactPar_max; impactPar_value *= impactPar_delta){
+    //if(printout)cout<<impactPar_value<<", ";
     // When we get to b>20R_A change methods - just take the photon flux at the center of the nucleus
     if(impactPar_value < (10.0*nucleus_R)){
       //Integrate over nuclear surface. n.b. this assumes total shadowing - treat photons hitting the nucleus the same no matter where they strike
@@ -401,9 +544,19 @@ Double_t *NeutronGenerator::PhotonFlux(const Double_t energyPhoton)
       flux_differential = PhotonDensity(impactPar_value,energyPhoton);
       }
     //multiply by volume element to get total flux in the volume element
-    flux_differential *= 2.0*pi*impactPar_value*impactPar_value*(1.0-1.0/impactPar_delta)*gHadronicProbabilityTable->Eval(impactPar_value);
+    flux_differential *= 2.0*pi*impactPar_value*impactPar_value*(1.0-1.0/impactPar_delta);
+    flux_differential *= gHadronicProbabilityTable->Eval(impactPar_value);
+    
     //modulate by the probability of nuclear breakup as f(impactPar_value)
-    for(Int_t i = 0; i < maxNeutrons+1; i++) breakupProb[i] = gNucleusBreakupTable[i].Eval(impactPar_value);    
+    for(Int_t i = 0; i < maxNeutrons+1; i++) breakupProb[i] = gNucleusBreakupTable[i].Eval(impactPar_value);
+    
+    breakupProb[2] = 0;
+    for(Int_t i = 1; i < 3; i++) breakupProb[2] += gNucleusBreakupTable[i].Eval(impactPar_value); 
+    
+    breakupProb[3] = 0;
+    for(Int_t i = 3; i < maxNeutrons; i++) breakupProb[3] += gNucleusBreakupTable[i].Eval(impactPar_value); 
+    breakupProb[maxNeutrons - 1] = breakupProb[maxNeutrons];
+      
     flux_differentialMod[nFluxes-1] = flux_differential*breakupProb[maxNeutrons]*breakupProb[maxNeutrons];
     flux_integral[nFluxes-1] += flux_differentialMod[nFluxes-1];
     for(Int_t i = 0; i < maxNeutrons; i++){
@@ -412,8 +565,43 @@ Double_t *NeutronGenerator::PhotonFlux(const Double_t energyPhoton)
 	flux_integral[FromMatrixToVector(i,j)+1] += flux_differentialMod[FromMatrixToVector(i,j)];
 	}
       }
+    if(printout){
+      fImpProfile[2].SetPoint(nStep,impactPar_value,(flux_differential-flux_differentialMod[FromMatrixToVector(0,0)]-flux_differentialMod[nFluxes-1])/(impactPar_value*(1.0-1.0/impactPar_delta)));
+      fImpProfile[0].SetPoint(nStep,impactPar_value,flux_differentialMod[FromMatrixToVector(0,0)]/(impactPar_value*(1.0-1.0/impactPar_delta)));
+      fImpProfile[1].SetPoint(nStep,impactPar_value,flux_differentialMod[nFluxes-1]/(impactPar_value*(1.0-1.0/impactPar_delta)));
+      
+      fImpProfile[3].SetPoint(nStep,impactPar_value,flux_differentialMod[FromMatrixToVector(0,1)]/(impactPar_value*(1.0-1.0/impactPar_delta)));
+      fImpProfile[4].SetPoint(nStep,impactPar_value,flux_differentialMod[FromMatrixToVector(0,2)]/(impactPar_value*(1.0-1.0/impactPar_delta)));
+      
+      fImpProfile[5].SetPoint(nStep,impactPar_value,flux_differentialMod[FromMatrixToVector(maxNeutrons - 1,1)]/(impactPar_value*(1.0-1.0/impactPar_delta)));
+      fImpProfile[6].SetPoint(nStep,impactPar_value,flux_differentialMod[FromMatrixToVector(maxNeutrons - 1,2)]/(impactPar_value*(1.0-1.0/impactPar_delta)));
+      
+      fImpProfile[7].SetPoint(nStep,impactPar_value,flux_differentialMod[FromMatrixToVector(0,3)]/(impactPar_value*(1.0-1.0/impactPar_delta)));
+ 
+      }
+
+ 
     flux_integral[0] += flux_differential;
+    nStep++;
     }
+    
+  if(printout){  
+    //cout<<"0n12n = "<<energyPhoton*flux_integral[FromMatrixToVector(0,2)+1]<<endl;  
+    //cout<<"0n3pn = "<<energyPhoton*flux_integral[FromMatrixToVector(0,3)+1]<<endl; 
+    //cout<<"Xn1n = "<<energyPhoton*flux_integral[FromMatrixToVector(maxNeutrons - 1,1)+1]<<endl; 
+    //cout<<"Xn2pn = "<<energyPhoton*flux_integral[FromMatrixToVector(maxNeutrons - 1,2)+1]<<endl;
+    } 
+  
+  for(Int_t iFlux=1; iFlux<nFluxes; iFlux++) flux_integral[iFlux] /= flux_integral[0];
+  
+  if(printout){
+    fOutputFile = new TFile("Output.root","RECREATE");
+    for(Int_t i=0; i<=9; i++){
+      fImpProfile[i].SetName(Form("fImpProfile%d",i));
+      fImpProfile[i].Write(); 
+      }
+  }
+  
   return flux_integral;
 }
 //______________________________________________________________________________
@@ -427,6 +615,75 @@ Double_t NeutronGenerator::PhotonDensity2(const Double_t distance, const Double_
 {
   Double_t Xvar=energyPhoton*distance/(hbarcmev*gammaTarget); 
   return (nucleus_Z*nucleus_Z*alpha*energyPhoton)*(TMath::BesselK1(Xvar)*TMath::BesselK1(Xvar))/((pi*gammaTarget*hbarcmev)*(pi*gammaTarget*hbarcmev));
+  
+}
+//______________________________________________________________________________
+Double_t NeutronGenerator::GetEMDCrossSection()
+{
+  Double_t EMDxsection[maxNeutrons+1];
+  for(Int_t i = 0; i < maxNeutrons+1; i++)EMDxsection[i] = 0;
+  
+  Double_t impactPar_min=1.8*nucleus_R;
+  Double_t impactPar_max=1e9;
+  Double_t nStepsEMD = 100000;
+  
+  Double_t impactPar_delta=TMath::Exp(TMath::Log(impactPar_max/impactPar_min)/Double_t(nStepsEMD));
+  
+  cout<<"Computing EMD cross section"<<endl; 
+  Int_t iStep = 0;
+  for(Double_t impactPar_value = impactPar_min; impactPar_value<=impactPar_max; impactPar_value *= impactPar_delta){
+    Double_t* prob_Breakup = NucleusBreakupProbability(impactPar_value);
+  
+    EMDxsection[0] += gHadronicProbabilityTable->Eval(impactPar_value)*ComputeXnProbability(impactPar_value)*2*pi*impactPar_value*impactPar_value*(1.0-1.0/impactPar_delta);
+    for(Int_t i = 1; i < 11; i++)EMDxsection[i] += gHadronicProbabilityTable->Eval(impactPar_value)*prob_Breakup[i]*2*pi*impactPar_value*impactPar_value*(1.0-1.0/impactPar_delta);
+    delete [] prob_Breakup;
+    //cout<<ComputeXnProbability(impactPar_value)<<endl;
+    iStep++;
+    if(iStep%10000 == 0){
+      if(iStep > 10000){ printf("\033[1A"); printf("\033[K");}   
+       cout<<iStep/1000<<"%"<<endl;
+       }
+    }
+  
+  for(Int_t i = 0; i < 11; i++)EMDxsection[i] /= 100; //barns 
+
+  cout<<"EMD cross section total = "<<EMDxsection[0]<<" barn"<<endl;
+  for(Int_t i = 1; i < 11; i++)cout<<"EMD cross section "<<i<<"n = "<<EMDxsection[i]<<" barn"<<endl;
+  for(Int_t i = 1; i < 11; i++)cout<<"EMD cross section fraction "<<i<<"n = "<<EMDxsection[i]/EMDxsection[0]<<endl;
+  return EMDxsection[maxNeutrons];
+}
+//______________________________________________________________________________
+Double_t NeutronGenerator::ComputeXnProbability(const Double_t impactPar)
+{
+  //Double_t prob_Breakup = 0.0;
+  Double_t prob_Xn=0.0;
+  
+  Double_t prob_Breakup = 0.0;
+
+  //Maximum energy for GDR dissocation (in target frame, in MeV)
+  Double_t photonEnergyLimit_Xn = 0.0;
+  if (beamGamma > 500.){
+      photonEnergyLimit_Xn=1.E10;
+  }
+  else{
+      photonEnergyLimit_Xn=1.E7;
+  }
+  
+   Double_t gk1=0,gk1m=0;
+  //Compute the probabilities 
+  //Xn dissociation
+  Double_t maxPhotonEnergy = TMath::Min(photonEnergyLimit_Xn,4.0*gammaTarget*hbarcmev/impactPar);
+  
+  gk1m = PhotonDensity2(impactPar,gXsection[0].GetX()[0]);
+  for(Int_t k = 1; gXsection[0].GetX()[k] < maxPhotonEnergy; k++){
+    gk1 = PhotonDensity2(impactPar,gXsection[0].GetX()[k]);
+    prob_Xn += (gXsection[0].GetX()[k]-gXsection[0].GetX()[k-1])*0.5*(gXsection[0].GetY()[k-1]*gk1m+gXsection[0].GetY()[k]*gk1);    
+    gk1m = gk1;
+    }
+    
+  prob_Breakup = 1-TMath::Exp(-1*prob_Xn);
+  
+  return prob_Breakup;
 }
 //______________________________________________________________________________
 void NeutronGenerator::BuildNucleusBreakupProbabilityTable()
@@ -437,14 +694,15 @@ void NeutronGenerator::BuildNucleusBreakupProbabilityTable()
 
   cout<<"Building nucleus breakup probability tables"<<endl;  
   
-  Double_t impactPar_min=1.8*nucleus_R;
-  Double_t impactPar_max=impactPar_min + 6.0*hbarc*beamGamma/(1e-5); 
+  Double_t impactPar_min=1.6*nucleus_R;
+  Double_t impactPar_max=impactPar_min + 6.0*hbarc*beamGamma; 
   Double_t impactPar_delta=TMath::Exp(TMath::Log(impactPar_max/impactPar_min)/Double_t(nSteps_impactPar*10));
   Int_t iStep = 0;
   
   for(Double_t impactPar_value = impactPar_min; impactPar_value<=impactPar_max; impactPar_value *= impactPar_delta){
     Double_t* prob_Breakup = NucleusBreakupProbability(impactPar_value);
     for(Int_t i = 0; i < maxNeutrons+1; i++)gNucleusBreakupTable[i].SetPoint(iStep,impactPar_value,prob_Breakup[i]);
+    delete [] prob_Breakup;
     iStep++;
     if(iStep%120 == 0){
       if(iStep > 120){ printf("\033[1A"); printf("\033[K");}   
@@ -465,24 +723,26 @@ Double_t *NeutronGenerator::NucleusBreakupProbability(const Double_t impactPar)
 
   //Maximum energy for GDR dissocation (in target frame, in MeV)
   Double_t photonEnergyLimit_Xn = 0.0;
-  Double_t photonEnergyLimit_Nn = 140.0;
   if (beamGamma > 500.){
       photonEnergyLimit_Xn=1.E10;
   }
   else{
       photonEnergyLimit_Xn=1.E7;
   }
-   Double_t gk1=0,gk1m=0,maxPhotonEnergy = 0;
-   Double_t integralXn = 0, integralNn = 0;
-
+  
+   Double_t gk1=0,gk1m=0;
   //Compute the probabilities 
   //Xn dissociation
-  maxPhotonEnergy = TMath::Min(photonEnergyLimit_Xn,4.0*gammaTarget*hbarcmev/impactPar);
-  gk1m = PhotonDensity2(impactPar,energyGamma_Xn[0]);
-  for(Int_t k = 1; energyGamma_Xn[k] < maxPhotonEnergy; k++){
-    gk1 = PhotonDensity2(impactPar,energyGamma_Xn[k]);
-    prob_Xn += (energyGamma_Xn[k]-energyGamma_Xn[k-1])*0.5*(xSection_Xn[k-1]*gk1m+xSection_Xn[k]*gk1);
-    for(Int_t i=1; i<maxNeutrons; i++) prob_Nn[i-1] += (energyGamma_Xn[k]-energyGamma_Xn[k-1])*0.5*(xSection_Xn[k-1]*GetBR(energyGamma_Xn[k-1],i)*gk1m+xSection_Xn[k]*GetBR(energyGamma_Xn[k],i)*gk1);
+  Double_t maxPhotonEnergy = TMath::Min(photonEnergyLimit_Xn,4.0*gammaTarget*hbarcmev/impactPar);
+  
+  gk1m = PhotonDensity2(impactPar,gXsection[0].GetX()[0]);
+  for(Int_t k = 1; gXsection[0].GetX()[k] < maxPhotonEnergy; k++){
+    gk1 = PhotonDensity2(impactPar,gXsection[0].GetX()[k]);
+    
+    prob_Xn += (gXsection[0].GetX()[k]-gXsection[0].GetX()[k-1])*0.5*(gXsection[0].GetY()[k-1]*gk1m+gXsection[0].GetY()[k]*gk1);
+    for(Int_t i=11; i<maxNeutrons; i++) 
+      prob_Nn[i-1] += (gXsection[0].GetX()[k]-gXsection[0].GetX()[k-1])*0.5*(gXsection[0].GetY()[k-1]*GetBR(gXsection[0].GetX()[k-1],i)*gk1m+gXsection[0].GetY()[k]*GetBR(gXsection[0].GetX()[k],i)*gk1);
+    
     gk1m = gk1;
     }
     
@@ -490,31 +750,28 @@ Double_t *NeutronGenerator::NucleusBreakupProbability(const Double_t impactPar)
   prob_Breakup[0] = TMath::Exp(-1*prob_Xn);
   
   //Nn dissociation
-  for(Int_t i=0; i<10; i++){
-    photonEnergyLimit_Nn = gSection_Nn[i].GetX()[gSection_Nn[i].GetN()-1];
-    maxPhotonEnergy = TMath::Min(photonEnergyLimit_Nn,4.0*gammaTarget*hbarcmev/impactPar); 
-    gk1m = PhotonDensity2(impactPar,gSection_Nn[i].GetX()[0]);
-    for(Int_t k = 1; gSection_Nn[i].GetX()[k] < maxPhotonEnergy; k++){
-      gk1 = PhotonDensity2(impactPar,gSection_Nn[i].GetX()[k]);
-      prob_Nn[i] += (gSection_Nn[i].GetX()[k]-gSection_Nn[i].GetX()[k-1])*0.5*(gSection_Nn[i].GetY()[k-1]*gk1m+gSection_Nn[i].GetY()[k]*gk1);
+  for(Int_t i=1; i<=10; i++){
+    gk1m = PhotonDensity2(impactPar,gXsection[i].GetX()[0]);
+    for(Int_t k = 1; gXsection[i].GetX()[k] < maxPhotonEnergy; k++){
+      gk1 = PhotonDensity2(impactPar,gXsection[i].GetX()[k]);
+      prob_Nn[i-1] += (gXsection[i].GetX()[k]-gXsection[i].GetX()[k-1])*0.5*(gXsection[i].GetY()[k-1]*gk1m+gXsection[i].GetY()[k]*gk1);
       gk1m = gk1;
       }
     }
-  
   Double_t integralPoisson = 0;
   Int_t maxExcitation = 5;
-  if(impactPar<22) maxExcitation = 6;
-  /*/
-  for(Int_t i=0; integralPoisson<0.999; i++){
+  //if(impactPar<22) maxExcitation = 6;
+  
+  /* for(Int_t i=0; integralPoisson<0.999; i++){
     integralPoisson += TMath::PoissonI(i,prob_Xn);
     maxExcitation = i;
-    }
-/*/
+    } */
+  
   Double_t norm_Xn = 0.0;  
   for(Int_t i=1; i<maxNeutrons; i++){ 
     prob_Breakup[i] += prob_Nn[i-1];
-    for(Int_t j=1; i+j<maxNeutrons; j++){
     if(maxExcitation<2) break;
+    for(Int_t j=1; i+j<maxNeutrons; j++){
       prob_Breakup[i+j] += prob_Nn[i-1]*prob_Nn[j-1]/2;
       if(maxExcitation<3) break;
       for(Int_t k=1; i+j+k<maxNeutrons; k++){ 
@@ -539,10 +796,10 @@ Double_t *NeutronGenerator::NucleusBreakupProbability(const Double_t impactPar)
       }
       prob_Breakup[i] *= TMath::Exp(-1*prob_Xn);
       norm_Xn += prob_Breakup[i];
-    } 
-
-  for(Int_t i=1; i<maxNeutrons; i++) prob_Breakup[i] *= prob_Breakup[maxNeutrons]/norm_Xn;
-  gUnitaryLeak->SetPoint(gUnitaryLeak->GetN(),impactPar,norm_Xn/prob_Breakup[maxNeutrons]);
+    }
+    
+  for(Int_t i=1; i<maxNeutrons; i++) if(norm_Xn != 0)prob_Breakup[i] *= prob_Breakup[maxNeutrons]/norm_Xn;
+  if(prob_Breakup[maxNeutrons] > 0)gUnitaryLeak->SetPoint(gUnitaryLeak->GetN(),impactPar,norm_Xn/prob_Breakup[maxNeutrons]);
   
   return prob_Breakup;  
 }
@@ -550,339 +807,179 @@ Double_t *NeutronGenerator::NucleusBreakupProbability(const Double_t impactPar)
 //______________________________________________________________________________
 Double_t NeutronGenerator::GetBR(const Double_t energyPhoton, const Int_t nNeutrons)
 {
-  if(nNeutrons < 2) return 0;
-  if(energyPhoton < nNeutrons*neutronSepThr) return 0;
-  if(nNeutrons <= 10)if(energyPhoton < gSection_Nn[nNeutrons-1].GetX()[gSection_Nn[nNeutrons-1].GetN()-1]) return 0;
-
   return hBranchingRatioMap->GetBinContent(hBranchingRatioMap->FindBin(energyPhoton,nNeutrons));
 } 
 //______________________________________________________________________________
 void NeutronGenerator::Initialize()
 {
-  //Data for Xn in 25GeV-103GeV from Pb Nucl. Phys. A367, 237 (1981) 		
-  Double_t energyGamma_Lepretre[28]={26.,28.,30.,32.,34.,36.,38.,40.,44.,46.,48.,50.,52.,55.,57.,62.,64.,66.,69.,72.,74.,76.,79.,82.,86.,92.,98.,103.};
-  Double_t xSection_Lepretre[28]={30.,21.5,22.5,18.5,17.5,15.,14.5,19.,17.5,16.,14.,20.,16.5,17.5,17.,15.5,18.,15.5,15.5,15.,13.5,18.,14.5,15.5,12.5,13.,13.,12.};
-
-  //Data for Xn in 103-440 MeV Nucl. Phys. A431, 573 (1984)
-  Double_t energyGamma_Carlos[22]= {103.,106.,112.,119.,127.,132.,145.,171.,199.,230.,235.,
-  		  254.,280.,300.,320.,330.,333.,373.,390.,420.,426.,440.};
-  Double_t xSection_Carlos[22]= {12.0,11.5,12.0,12.0,12.0,15.0,17.0,28.0,33.0,
-  		  52.0,60.0,70.0,76.0,85.0,86.0,89.0,89.0,75.0,76.0,69.0,59.0,61.0};
-		  
-  //Data for Xn in 2-16.4 GeV from Phys. Rev. Lett. 39, 737 (1977) and Phys. Rev. D 7, 1362 (1973)		  
-  Double_t energyGamma_MichaDwell[11]={2000.0,3270.0,4100.0,4810.0,6210.0,6600.0,7790.0,8400.0,9510.0,13600.0,16400.0};
-  Double_t xSection_MichaDwell[11]={0.1266,0.1080,0.0805,0.1017,0.0942,0.0844,0.0841,0.0755,0.0827,0.0626,0.0740};
-		 
+  gXsection = new TGraph[11];
+  TGraph gXsectionF;
   
-  // gammay,p gamma,n of Armstrong begin at 265 incr 25
-  Double_t xSection_p_Armstrong[160]={0.,.4245,.4870,.5269,.4778,.4066,.3341,.2444,.2245,.2005,
-  		    .1783,.1769,.1869,.1940,.2117,.2226,.2327,.2395,.2646,.2790,.2756,
-  		    .2607,.2447,.2211,.2063,.2137,.2088,.2017,.2050,.2015,.2121,.2175,
-  		    .2152,.1917,.1911,.1747,.1650,.1587,.1622,.1496,.1486,.1438,.1556,
-  		    .1468,.1536,.1544,.1536,.1468,.1535,.1442,.1515,.1559,.1541,.1461,
-  		    .1388,.1565,.1502,.1503,.1454,.1389,.1445,.1425,.1415,.1424,.1432,
-  		    .1486,.1539,.1354,.1480,.1443,.1435,.1491,.1435,.1380,.1317,.1445,
-  		    .1375,.1449,.1359,.1383,.1390,.1361,.1286,.1359,.1395,.1327,.1387,
-  		    .1431,.1403,.1404,.1389,.1410,.1304,.1363,.1241,.1284,.1299,.1325,
-  		    .1343,.1387,.1328,.1444,.1334,.1362,.1302,.1338,.1339,.1304,.1314,
-  		    .1287,.1404,.1383,.1292,.1436,.1280,.1326,.1321,.1268,.1278,.1243,
-  		    .1239,.1271,.1213,.1338,.1287,.1343,.1231,.1317,.1214,.1370,.1232,
-  		    .1301,.1348,.1294,.1278,.1227,.1218,.1198,.1193,.1342,.1323,.1248,
-  		    .1220,.1139,.1271,.1224,.1347,.1249,.1163,.1362,.1236,.1462,.1356,
-  		    .1198,.1419,.1324,.1288,.1336,.1335,.1266};
-
-
-  Double_t xSection_n_Armstrong[160]={0.,.3125,.3930,.4401,.4582,.3774,.3329,.2996,.2715,.2165,
-  		     .2297,.1861,.1551,.2020,.2073,.2064,.2193,.2275,.2384,.2150,.2494,
-  		     .2133,.2023,.1969,.1797,.1693,.1642,.1463,.1280,.1555,.1489,.1435,
-  		     .1398,.1573,.1479,.1493,.1417,.1403,.1258,.1354,.1394,.1420,.1364,
-  		     .1325,.1455,.1326,.1397,.1286,.1260,.1314,.1378,.1353,.1264,.1471,
-  		     .1650,.1311,.1261,.1348,.1277,.1518,.1297,.1452,.1453,.1598,.1323,
-  		     .1234,.1212,.1333,.1434,.1380,.1330,.12,.12,.12,.12,.12,.12,.12,.12,
-  		     .12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,
-  		     .12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,
-  		     .12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,
-  		     .12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,
-  		     .12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12,.12};
-
-  Double_t BrtWgnr_xsection = 0, BrtWgnr_width = 0, BrtWgnr_mean = 0;
-  Int_t	nStepsLowE = 0, iStepE =0;
-  Double_t eStepLowE = 0.05;
-  
-  if (nucleus_Z == 79){
-    //GDR Breit-Wigner fit parameters from Nucl. Phys. A159, 561 (1970)  
-    BrtWgnr_xsection=540.0;
-    BrtWgnr_width=4.75;
-    BrtWgnr_mean=13.70;
-    neutronSepThr=8.1;
-      }
-  else{
-    //GDR Breit-Wigner fit parameters from Nucl. Phys. A159, 561 (1970)
-    BrtWgnr_xsection=640.0;
-    BrtWgnr_width=4.05;
-    BrtWgnr_mean=13.42;
-    neutronSepThr=7.4;
-    }
-
-  //Veyssiere et al. Nucl. Phys. A159, 561 (1970) - Lorentzian parametrization of GDR peak
-  Double_t BrtWgnr_Con = 0.1*BrtWgnr_width*BrtWgnr_width*BrtWgnr_xsection;
-  nStepsLowE=Int_t((25.0-neutronSepThr)/eStepLowE)+1;
-  for ( Int_t i = 0; i < nStepsLowE; i++ ) {
-    energyGamma_Xn[i] = i*eStepLowE + neutronSepThr;
-    xSection_Xn[i] = 0.93*BrtWgnr_Con*energyGamma_Xn[i]*energyGamma_Xn[i]/(((BrtWgnr_mean*BrtWgnr_mean-energyGamma_Xn[i]*energyGamma_Xn[i])*(BrtWgnr_mean*BrtWgnr_mean-energyGamma_Xn[i]*energyGamma_Xn[i]))
-  				+energyGamma_Xn[i]*energyGamma_Xn[i]*BrtWgnr_width*BrtWgnr_width);
-  }
-  
-  iStepE = nStepsLowE;   
-  //25-103 MeV, Lepretre, et al., Nucl. Phys. A367, 237 (1981)
-  for ( Int_t j = 0; j < 27; j++ ) {
-    energyGamma_Xn[iStepE] = energyGamma_Lepretre[j];
-    xSection_Xn[iStepE] = 0.1*nucleus_A*xSection_Lepretre[j]/208.0;
-    iStepE++; 
-    }
-  //103-440 MeV, Carlos, et al., Nucl. Phys. A431, 573 (1984)
-  for ( Int_t j = 0; j < 22; j++ ) {
-    energyGamma_Xn[iStepE] = energyGamma_Carlos[j];
-    xSection_Xn[iStepE] = 0.1*nucleus_A*xSection_Carlos[j]/208.0;
-    iStepE++;
-    }
+  if(fNucleus == kPb208){
+    InsertDataset(gXsection[0],ReadXSFile("XS_Pb_208_Xn_Veyssiere.txt"));
     
-  //440 MeV-2 GeV Armstrong et al.
-  for ( Int_t j = 9; j <= 70; j++) {
-      energyGamma_Xn[iStepE] = energyGamma_Xn[iStepE-1]+25.0;
-      xSection_Xn[iStepE] = 0.1*(nucleus_Z*xSection_p_Armstrong[j]+(nucleus_A-nucleus_Z)*xSection_n_Armstrong[j]);
-      iStepE++;
-      }
-      
-  //2-16.4 GeV Michalowski; Caldwell
-  for ( Int_t j = 0; j < 11; j++) {
-      energyGamma_Xn[iStepE] = energyGamma_MichaDwell[j];
-      xSection_Xn[iStepE] = 0.1*nucleus_A*xSection_MichaDwell[j];
-      iStepE++;
-      }
-  //Regge parameters
-  Double_t x=0,y=0,eps=0,eta=0,em=0,exx=0,s=0,ictr=0,pom=0,vec=0;
-  x = 0.0677;
-  y = 0.129;
-  eps = 0.0808;
-  eta = 0.4525;
-  em = 0.94;
-  exx = pow(10,0.05);
-
-  //Regge model for high energy
-  s = 0.002*em*energyGamma_Xn[iStepE-1];
-  //make sure we reach LHC energies
-  ictr = 100;
-  if ( gammaTarget > (2.*150.*150.)) ictr = 150;
-  for ( Int_t j = 1; j <= ictr; j++ ) {
-      s = s*exx;
-      energyGamma_Xn[iStepE] = 1000.0*0.5*(s-em*em)/em;
-      pom = x*pow(s,eps);
-      vec = y*pow(s,(-eta));
-      xSection_Xn[iStepE] = 0.1*0.65*nucleus_A*(pom+vec);
-      iStepE++;
-  }
-  hXsectionXn = new TH1D("hXsectionXn","hXsectionXn",624,energyGamma_Xn);
-  for(Int_t i = 0; i<624; i++)hXsectionXn->SetBinContent(i+1,xSection_Xn[i]);
-  //cout<<"Hist = "<<hXsectionXn->Integral(0,hXsectionXn->FindBin(140))<<endl;
-  
-  Double_t eMeanN_Lepretre[34] = {24.38, 27.07, 28.96, 31.89, 33.51, 34.3, 35.39, 38.06, 40.18, 45.28, 46.09, 47.42, 51.17, 54.9, 58.1, 64.26, 62.67, 65.88, 70.16, 72.57, 75.51, 77.09, 79.24, 81.91, 85.96, 92.63, 98.25, 102.81, 106.29, 112.16, 119.12, 127.41, 132.45, 140.76};
-
-  Double_t vMeanN_Lepretre[34] = {2.057, 2.515, 3.055, 2.948, 3.38, 3.165, 3.785, 3.543, 3.248, 3.708, 4.085, 3.978, 4.276, 3.873, 3.793, 4.065, 4.415, 4.497, 4.795, 4.903, 4.985, 4.42, 4.69, 4.503, 5.932, 5.477, 5.856, 6.316, 6.721, 6.427, 6.78, 7.133, 5.923, 6.734};
-
-  Double_t eWidthN_Lepretre[31] = {24.05, 26.45, 29.12, 32.06, 34.2, 37.94, 39.54, 43.82, 45.15, 46.76, 49.96, 51.03, 54.24, 57.71, 61.45, 64.12, 65.19, 66.26, 71.87, 74.54, 76.68, 79.08, 81.76, 86.3, 92.18, 97.79, 102.33, 111.68, 118.89, 126.37, 131.72};
-
-  Double_t vWidthN_Lepretre[31] = {0.308, 0.521, 0.215, 0.415, 0.402, 0.708, 1, 1.001, 1.081, 1.347, 1.413, 1.307, 1.719, 1.295, 1.694, 1.906, 1.707, 1.694, 1.92, 2.319, 2.2, 1.881, 2.121, 2.108, 2.122, 2.508, 2.229, 2.522, 2.111, 2.205, 3.308};
-
-  Double_t eMeanN_Veyssiere[39] = {11.63, 11.97, 12.25, 12.53, 12.80, 13.10, 13.35, 13.65, 13.92, 14.18, 14.46, 14.74, 15.01, 15.28, 15.54, 15.82, 16.09, 16.37, 16.63, 16.91, 17.18, 17.17, 17.46, 17.71, 17.98, 18.26, 18.52, 18.78, 19.07, 19.35, 19.67, 19.92, 20.22, 20.48, 20.76, 21.02, 21.32, 21.58, 21.87}; 
-
-  Double_t vMeanN_Veyssiere[39] = {1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.04, 1.09, 1.15, 1.20, 1.28, 1.31, 1.39, 1.45, 1.49, 1.55, 1.56, 1.61, 1.63, 1.64, 1.71, 1.68, 1.72, 1.72, 1.74, 1.77, 1.69, 1.70, 1.64, 1.76, 1.74, 1.73, 1.70, 1.66, 1.73};
-
-  Double_t thresholdNeutronN[4] = {7.4, 14.1, 22.5, 30.0};
-
-  Double_t eMeanNeutronN[74],vMeanNeutronN[74]; 
-  Double_t eWidthNeutronN[34],vWidthNeutronN[34]; 
-  //Double_t eWidthNeutronN[71],vWidthNeutronN[71];
-  
-  eMeanNeutronN[0] = neutronSepThr;
-  vMeanNeutronN[0] = 1.0;
-  iStepE = 1;
-  for ( Int_t j = 0; j < 39; j++) {
-    eMeanNeutronN[iStepE] = eMeanN_Veyssiere[j];
-    vMeanNeutronN[iStepE] = vMeanN_Veyssiere[j];
-    iStepE++;
+    for(Int_t nNeutrons = 1; nNeutrons<=2; nNeutrons++)
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Pb_208_%dn_Veyssiere.txt",nNeutrons))); 
+    } 
+  if(fNucleus == kAu197){
+    InsertDataset(gXsection[0],ReadXSFile("XS_Au_197_Xn_Veyssiere.txt"));
+    
+    for(Int_t nNeutrons = 1; nNeutrons<=2; nNeutrons++)
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Au_197_%dn_Veyssiere.txt",nNeutrons)));
     }
-  for ( Int_t j = 0; j < 34; j++) {
-    eMeanNeutronN[iStepE] = eMeanN_Lepretre[j];
-    vMeanNeutronN[iStepE] = vMeanN_Lepretre[j];
-    iStepE++;
-    }
-  
-  //There are no data for widths from Veyssiere, we use uncertainty of the mean as the width in the 2neutron region. 
-  //   
-  eWidthNeutronN[0] = thresholdNeutronN[0];
-  vWidthNeutronN[0] = 0.1;
-  eWidthNeutronN[1] = thresholdNeutronN[1];
-  vWidthNeutronN[1] = 0.1;
-  eWidthNeutronN[2] = thresholdNeutronN[2];
-  vWidthNeutronN[2] = 0.1;
-  iStepE = 3;
+  if(fNucleus == kPb208 || fNucleus == kAu197){
+    InsertDataset(gXsection[0],ReadXSFile("XS_Au_197_Xn_Michalowski.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_Pb_208_Xn_Caldwell.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_Pb_208_Xn_Lepretre.txt"));
+    
+    /*/ 
+  Double_t *xsData = ReadXSFile(".XS_n_2_Armstrong.txt");
+  Double_t *pData = ReadXSFile("XS_p_1_Armstrong.txt");
+  for(Int_t i = 1; i<xsData[0]; i++)xsData[2*i] += pData[2*i];
+  InsertDataset(gXsection[0],xsData);
   /*/
-  for ( Int_t j = 0; j < 39; j++) {
-    eWidthNeutronN[iStepE] = eMeanN_Veyssiere[j];
-    vWidthNeutronN[iStepE] = TMath::Sqrt(vMeanN_Veyssiere[j]);
-    iStepE++;
-    }
-  /*/  
-  for ( Int_t j = 0; j < 31; j++) {
-    eWidthNeutronN[iStepE] = eWidthN_Lepretre[j];
-    vWidthNeutronN[iStepE] = vWidthN_Lepretre[j];
-    iStepE++;
-    }
-  
- gMeanNeutronN = new TGraph(74,eMeanNeutronN,vMeanNeutronN);
- gMeanNeutronN->SetName("gMeanNeutronN");
- gWidthNeutronN = new TGraph(34,eWidthNeutronN,vWidthNeutronN);
- gWidthNeutronN->SetName("gWidthNeutronN");
- 
- fitMeanNeutronN = new TF1("fitMeanNeutronN", "[0]*TMath::Log(x)+[1]", 140, 1e9);
- fitMeanNeutronN->SetParameters(2.16117,-4.47756);
- 
- fitWidthNeutronN = new TF1("fitWidthNeutronN", "[0]*TMath::Log(x)+[1]", 140, 1e9);
- fitWidthNeutronN->SetParameters(1.53,-4.68);
- 
- Double_t mean; 
- Double_t width;
- Double_t integral;
- Double_t energyValue;
- hBranchingRatioMap = new TH2D("hBranchingRatioMap","hBranchingRatioMap",624,energyGamma_Xn,50,0,50);
- for(Int_t i = 0; i<624; i++){
-   if(hXsectionXn->GetBinCenter(i+1)<100)continue;
-   energyValue = hXsectionXn->GetBinCenter(i+1);
-   if(energyValue > saturationEnergy) energyValue = saturationEnergy;
-   mean = fitMeanNeutronN->Eval(energyValue);
-   width = fitWidthNeutronN->Eval(energyValue);
-   integral = 0;
-   for(Int_t j = 2; j<50; j++){
-     hBranchingRatioMap->SetBinContent(i+1,j+1,TMath::Gaus(j,mean,width,kTRUE));
-     integral+=TMath::Gaus(j,mean,width,kTRUE);
-     }
-   for(Int_t j = 2; j<50; j++) hBranchingRatioMap->SetBinContent(i+1,j+1,hBranchingRatioMap->GetBinContent(i+1,j+1)/integral);
-   }
- 
- gSection_Nn = new TGraph[10];
- 
- Double_t energyGamma_1n[76] = {7.5, 7.57, 7.64, 7.71, 7.79, 7.88, 7.95, 8.05, 8.12, 8.19, 8.26, 8.33, 8.47, 8.56, 8.65, 8.74, 8.87, 8.98, 9.12, 9.23, 9.35, 9.49, 9.6, 9.74, 9.84, 9.96, 10.08, 10.22, 10.37, 10.49, 10.61, 10.73, 10.85, 11.0, 11.13, 11.24, 11.38, 11.51, 11.64, 11.76, 11.89, 12.0, 12.13, 12.26, 12.53, 12.68, 12.95, 13.12, 13.5, 13.79, 14.05, 14.28, 14.58, 14.8, 15.08, 15.37, 15.66, 15.95, 16.21, 16.53, 16.79, 17.05, 17.33, 17.6, 17.86, 18.13, 18.4, 18.66, 18.9, 19.2, 19.46, 19.74, 20.03, 20.28, 20.55, 20.85}; 
-
-  Double_t xSection_1n[150] = {11.0, 21.0, 34.0, 31.0, 21.0, 19.0, 32.0, 36.0, 29.0, 25.0, 26.0, 35.0, 31.0, 34.0, 32.0, 38.0, 38.0, 46.0, 54.0, 60.0, 71.0, 73.0, 67.0, 80.0, 115.0, 134.0, 113.0, 101.0, 132.0, 164.0, 176.0, 183.0, 208.0, 241.0, 306.0, 311.0, 302.0, 321.0, 336.0, 386.0, 407.0, 418.0, 432.0, 459.0, 512.0, 534.0, 589.0, 641.0, 645.0, 625.0, 598.0, 560.0, 470.0, 418.0, 336.0, 287.0, 230.0, 184.0, 137.0, 116.0, 95.0, 82.0, 71.0, 59.0, 53.0, 46.0, 42.0, 35.0, 31.0, 27.0, 26.0, 25.0, 25.0, 23.0, 23.0, 19.0}; 
-
-  gSection_Nn[0] = TGraph(76,energyGamma_1n,xSection_1n);
-  for (Int_t i=0;i<gSection_Nn[0].GetN();i++) gSection_Nn[0].GetY()[i] *= 0.1;
-  for (Int_t i=0;i<gSection_Nn[0].GetN();i++) gSection_Nn[0].GetY()[i] *= 0.93; //Correction from Phys.Rev. C 36, 1286 (1987)
-  gSection_Nn[0].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[0].SetMarkerStyle(kFullCircle);
-  gSection_Nn[0].SetMarkerColor(kBlue);
- 
-  Double_t energyGamma_2nV[50] = {14.587, 14.758, 14.915, 15.007, 15.092, 15.281, 15.386, 15.602, 15.836, 16.077, 16.316, 16.590, 16.801, 17.005, 17.226, 17.447, 17.682, 17.933, 18.115, 18.303, 18.504, 18.822, 19.067, 19.308, 19.545, 19.776, 20.116, 20.344, 20.575, 20.736, 20.951, 21.187, 21.471, 21.685, 21.930, 22.270, 22.500, 22.790, 23.030, 23.255, 23.486, 23.711, 23.919, 24.151, 24.375, 24.600, 24.808, 25.040, 25.475, 25.708};
-  Double_t xSection_2nV[50] = {0.904, 1.809, 2.932, 3.551, 4.267,  5.114, 6.017, 6.850, 7.613, 7.988, 8.537, 8.664, 8.811, 8.637, 8.493, 8.210, 8.139, 7.693, 7.574, 7.471, 7.128, 6.798, 6.290, 6.124, 5.603, 5.313, 5.029, 5.037, 4.724, 4.521, 4.602, 4.532, 4.507, 4.435, 4.270, 4.247, 4.023, 3.897, 3.887, 3.793, 3.632, 3.402, 3.262, 3.122, 3.041, 2.842, 2.535, 2.244, 1.778, 1.589};
-
-  Double_t energyGamma_2nL[40] = {26.001, 26.141, 26.149, 26.435, 27.091, 27.098, 27.885, 29.022, 29.927, 31.763, 34.364, 37.141, 42.241, 45.281, 48.289, 51.868, 55.422, 58.917, 62.668, 64.688, 68.408, 73.211, 76.919, 84.075, 87.430, 91.308, 92.320, 95.786, 99.933, 102.943, 106.520, 107.693, 111.102, 115.628, 120.750, 123.759, 127.338, 128.881, 131.890, 135.306};
-  Double_t xSection_2nL[40] = { 30.110, 29.326, 27.974, 26.828, 25.854, 24.851, 23.790, 22.571, 21.159, 19.817, 18.783, 17.806, 16.979, 16.985, 16.244, 16.008, 15.672, 15.403, 15.350, 14.835, 14.566, 14.384, 14.240, 13.961, 13.602, 13.489, 13.044, 13.429, 13.338, 13.054, 13.032, 12.714, 12.784, 12.773, 12.817, 12.589, 12.285, 12.596, 12.424, 12.303};
-  
-  gSection_Nn[1] = TGraph(50,energyGamma_2nV,xSection_2nV);
-  for (Int_t i=0;i<gSection_Nn[1].GetN();i++) gSection_Nn[1].GetY()[i] *= 0.93; //Correction from Phys.Rev. C 36, 1286 (1987)
-  gSection_Nn[1].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[1].SetMarkerStyle(kFullCircle);
-  gSection_Nn[1].SetMarkerColor(kGreen);
-  
-  for(Int_t i = 0; i< 40; i++)gSection_Nn[1].SetPoint(50+i,energyGamma_2nL[i],xSection_2nL[i]*0.1/2);
-
-  Double_t energyGamma_3n[44] = {22.515, 22.994, 23.148, 23.305, 23.623, 23.834,  23.935, 24.255, 24.733, 25.308, 26.009, 26.813, 28.595, 30.444, 32.659, 34.611, 37.150, 37.875, 40.211, 43.416, 46.641, 49.378, 53.185, 56.672, 60.200, 63.925, 67.504, 70.432, 74.660, 77.751, 82.468, 85.720, 90.274, 93.852, 98.730, 101.750, 106.210, 109.535, 114.341, 117.593, 122.471, 125.561, 129.951, 133.366}; 
-  Double_t xSection_3n[44] = {3.124, 4.637, 5.964, 6.951, 8.114, 9.123, 10.271, 11.182, 12.646, 14.889, 16.752, 18.192, 19.338, 20.086, 19.558, 18.536, 17.781, 17.352, 16.573, 15.312, 14.790, 13.715, 13.306, 12.812, 12.410, 11.949, 11.669, 11.510, 11.398, 11.123, 10.971, 10.946, 10.807, 10.716, 10.696, 10.655, 10.583, 10.581, 10.459, 10.508, 10.456, 10.483, 10.460, 10.457};  
- 
-  Double_t energyGamma_4n[35] = {31.473, 32.280, 33.087, 34.054, 35.344, 35.826, 36.469, 37.276, 38.830, 40.193, 45.066, 48.583, 52.221, 55.706, 59.377, 62.954, 66.393, 69.840, 73.689, 80.844, 84.421, 88.091, 91.576, 94.502, 98.556, 102.261, 105.979, 110.765, 114.927, 118.281, 121.124, 123.813, 127.902, 131.101, 134.206};
-  Double_t xSection_4n[35] = {0.838, 1.718, 2.775, 4.111, 5.857, 6.894, 8.109, 9.103, 10.259, 10.645, 11.446, 11.615, 11.435, 11.333, 11.200, 11.156, 11.056, 10.838, 10.695, 10.645, 10.732, 10.687, 10.580, 10.654, 10.450, 10.129, 9.925, 10.244, 10.346, 10.204, 9.874, 10.085, 9.906, 9.961, 9.851};
-
-  Double_t energyGamma_5n[30] = {39.137, 40.408, 41.704, 43.161, 45.105, 46.920, 48.867, 52.326, 55.655, 60.369, 63.782, 68.496, 71.423, 75.975, 79.551, 82.153, 86.705, 90.282, 95.160, 98.737, 102.856, 105.891, 109.288, 113.046, 115.973, 120.525, 123.858, 127.678, 131.256, 134.345}; 
-  Double_t xSection_5n[30] = {0.699, 2.029, 2.950, 3.920, 5.131, 6.049, 6.819, 7.618, 8.208, 8.513, 8.683, 8.941, 9.056, 9.201, 9.292, 9.331, 9.456, 9.495, 9.542, 9.559, 9.546, 9.547, 9.563, 9.551, 9.553, 9.710, 9.725, 9.845, 9.779, 9.814};
- 
-  Double_t energyGamma_6n[26] = {46.139, 47.999, 50.162, 54.058, 57.885, 61.042, 65.158, 68.191, 71.674, 75.342, 78.268, 83.144, 86.558, 91.922, 95.498, 99.660, 102.651, 105.414, 110.129, 113.380, 118.258, 121.834, 125.690, 128.988, 132.686, 135.166}; 
-  Double_t xSection_6n[26] = {0.363, 1.617, 2.388, 3.561, 4.416, 4.891, 5.348, 5.642, 5.942, 6.245, 6.460, 6.792, 6.952, 7.209, 7.404, 7.573, 7.668, 7.809, 7.977, 8.074, 8.197, 8.329, 8.371, 8.440, 8.559, 8.605};
     
-  Double_t energyGamma_7n[20] = {58.466, 62.292, 65.342, 69.187, 73.225, 76.173, 80.885, 84.094, 88.036, 91.449, 96.487, 100.063, 105.264, 108.352, 113.066, 116.154, 120.998, 124.281, 129.321, 132.247}; 
-  Double_t xSection_7n[20] = {0.599, 1.326, 1.871, 2.467, 3.056, 3.389, 3.957, 4.275, 4.530, 4.836, 5.259, 5.484, 5.818, 6.036, 6.301, 6.485, 6.762, 6.947, 7.157, 7.282};
+    InsertDataset(gXsection[0],ReadXSFile("XS_Pb_208_Xn_Bianchi.txt"));
+    
+    for(Int_t nNeutrons = 2; nNeutrons<=10; nNeutrons++)
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Pb_208_%dn_Lepretre.txt",nNeutrons)));
+    }
+    
+  if(fNucleus == kU238){
+    //InsertDataset(gXsection[0],ReadXSFile("XS_U_238_Xn_Caldwell.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_U_238_Xn_Michalowski.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_U_238_Xn_Veyssiere.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_U_238_Xn_Lepretre.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_U_238_Xn_Bergere.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_U_238_Xn_Bianchi.txt"));
+    
+    InsertDataset(gXsectionF,ReadXSFile("XS_U_238_Xn_Michalowski.txt"));
+    InsertDataset(gXsectionF,ReadXSFile("XS_U_238_F_Veyssiere.txt"));
+    InsertDataset(gXsectionF,ReadXSFile("XS_U_238_Xn_Lepretre.txt"));
+    InsertDataset(gXsectionF,ReadXSFile("XS_U_238_Xn_Bergere.txt"));
+    InsertDataset(gXsectionF,ReadXSFile("XS_U_238_Xn_Bianchi.txt"));
+    InsertDataset(gXsectionF,ReadXSFile("XS_Pb_208_Xn_Carlos.txt"));
+    InsertDataset(gXsectionF,MakeReggeParametrization(gXsectionF.GetX()[gXsectionF.GetN()-1], 150));
+    
+    for(Int_t nNeutrons = 1; nNeutrons<=2; nNeutrons++){
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_U_238_%dn_Veyssiere.txt",nNeutrons)));
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_U_238_%dn_Caldwell.txt",nNeutrons)));
+      }
+    for(Int_t nNeutrons = 2; nNeutrons<=10; nNeutrons++)
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Pb_208_%dn_Lepretre.txt",nNeutrons)));
+    }
+  
+  if(fNucleus == kXe129){
+    InsertDataset(gXsection[0],ReadXSFile("XS_I_127_Xn_Bergere.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_I_127_Xn_Bramblett.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_Ce_140_Xn_Lepretre.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_Sn_118_Xn_Lepretre.txt"));
+    InsertDataset(gXsection[0],ReadXSFile("XS_Sn_118_Xn_Bianchi.txt"));
+    
+    for(Int_t nNeutrons = 1; nNeutrons<=2; nNeutrons++){
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_I_127_%dn_Bergere.txt",nNeutrons)));
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_I_127_%dn_Bramblett.txt",nNeutrons)));
+      //InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Pb_208_%dn_Veyssiere.txt",nNeutrons)));
+      }
+    for(Int_t nNeutrons = 2; nNeutrons<=7; nNeutrons++){
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Ce_140_%dn_Lepretre.txt",nNeutrons)));
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Sn_118_%dn_Lepretre.txt",nNeutrons)));
+      //InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Pb_208_%dn_Lepretre.txt",nNeutrons)));
+      }
+    InsertDataset(gXsection[8],ReadXSFile("XS_Ce_140_8n_Lepretre.txt"));
+    for(Int_t nNeutrons = 9; nNeutrons<=10; nNeutrons++)
+      InsertDataset(gXsection[nNeutrons],ReadXSFile(Form("XS_Pb_208_%dn_Lepretre.txt",nNeutrons)));   
+    }
 
-  Double_t energyGamma_8n[19] = {66.435, 71.147, 75.264, 77.972, 82.522, 85.512, 89.673, 93.443, 96.824, 102.350, 105.113, 109.248, 112.264, 116.652, 119.578, 124.551, 127.380, 131.736, 133.718}; 
-  Double_t xSection_8n[19] = {0.369, 0.959, 1.399, 1.639, 2.095, 2.379, 2.716, 3.038, 3.315, 3.730, 3.971, 4.309, 4.445, 4.779, 5.003, 5.356, 5.515, 5.802, 5.962};
+  InsertDataset(gXsection[0],ReadXSFile("XS_Pb_208_Xn_Carlos.txt"));
 
-  Double_t energyGamma_9n[18] = {74.077, 78.116, 80.740, 85.127, 88.432, 92.279, 95.854, 99.431, 103.192, 106.420, 111.135, 114.061, 118.288, 121.214, 125.441, 128.652, 132.594, 134.871};
-  Double_t xSection_9n[18] = {0.388, 0.909, 1.121, 1.579, 1.788, 2.070, 2.303, 2.490, 2.698, 2.873, 3.054, 3.130, 3.281, 3.356, 3.489, 3.536, 3.653, 3.659};
-  
-  Double_t energyGamma_10n[16] = {81.558, 85.134, 88.709, 92.285, 95.861, 99.437, 102.986, 106.589, 110.165, 113.742, 117.318, 120.895, 124.471, 128.047, 131.624, 134.551}; 
-  Double_t xSection_10n[18] = {0.186, 0.418, 0.760, 1.048, 1.295, 1.447, 1.642, 1.851, 2.036, 2.162, 2.269, 2.431, 2.607, 2.691, 2.775, 2.831};
-  
-  gSection_Nn[2] = TGraph(44,energyGamma_3n,xSection_3n);
-  for (Int_t i=0;i<gSection_Nn[2].GetN();i++) gSection_Nn[2].GetY()[i] *= 0.1/3;
-  gSection_Nn[2].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[2].SetMarkerStyle(kFullCircle);
-  gSection_Nn[2].SetMarkerColor(kRed);
-  
-  gSection_Nn[3] = TGraph(35,energyGamma_4n,xSection_4n);
-  for (Int_t i=0;i<gSection_Nn[3].GetN();i++) gSection_Nn[3].GetY()[i] *= 0.1/4;
-  gSection_Nn[3].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[3].SetMarkerStyle(kOpenCircle);
-  gSection_Nn[3].SetMarkerColor(kRed);
+  InsertDataset(gXsection[0],MakeReggeParametrization(gXsection[0].GetX()[gXsection[0].GetN()-1], 150));
+   
+  //"Intepreted" ENDF files from https://www-nds.iaea.org/exfor/endf.htm
+  if (fNucleus == kAu197) ReadENDF("ENDF_Au197.txt");
+  if (fNucleus == kPb208) ReadENDF("ENDF_Pb208.txt");
+  if (fNucleus == kU238) ReadENDF("ENDF_U238.txt");
+  if (fNucleus == kXe129) ReadENDF("ENDF_Cs133.txt");
+ 
+  fitMeanNeutronN = new TF1("fitMeanNeutronN", "[0]*TMath::Log(x)+[1]", neutronSepThr, 1e9);
+  fitMeanNeutronN->SetParameters(2.16117,-4.47756);
+ 
+  fitWidthNeutronN = new TF1("fitWidthNeutronN", "[0]*TMath::Log(x)+[1]", neutronSepThr, 1e9);
+  fitWidthNeutronN->SetParameters(1.53,-4.68);
+ 
+  TF1 *fitMeanFissionN = new TF1("fitMeanFissionN", "[0]+([1]-[0])*(1-TMath::Exp([2]*(x-[4])))",neutronSepThr,1e9);
+  fitMeanFissionN->SetParameters(2.41,12.65,-0.015,4.8);
 
-  gSection_Nn[4] = TGraph(30,energyGamma_5n,xSection_5n);
-  for (Int_t i=0;i<gSection_Nn[4].GetN();i++) gSection_Nn[4].GetY()[i] *= 0.1/5;
-  gSection_Nn[4].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[4].SetMarkerStyle(kOpenCircle);
-  gSection_Nn[4].SetMarkerColor(kGreen);
-  
-  gSection_Nn[5] = TGraph(26,energyGamma_6n,xSection_6n);
-  for (Int_t i=0;i<gSection_Nn[5].GetN();i++) gSection_Nn[5].GetY()[i] *= 0.1/6;
-  gSection_Nn[5].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[5].SetMarkerStyle(kOpenCircle);
-  gSection_Nn[5].SetMarkerColor(kBlue);
-  
-  gSection_Nn[6] = TGraph(20,energyGamma_7n,xSection_7n);
-  for (Int_t i=0;i<gSection_Nn[6].GetN();i++) gSection_Nn[6].GetY()[i] *= 0.1/7;
-  gSection_Nn[6].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[6].SetMarkerStyle(kOpenCircle);
-  gSection_Nn[6].SetMarkerColor(kBlack);
-  
-  gSection_Nn[7] = TGraph(19,energyGamma_8n,xSection_8n);
-  for (Int_t i=0;i<gSection_Nn[7].GetN();i++) gSection_Nn[7].GetY()[i] *= 0.1/8;
-  gSection_Nn[7].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[7].SetMarkerStyle(kOpenSquare);
-  gSection_Nn[7].SetMarkerColor(kBlack);
+  TGraph gBranchingRatio;
+  if(fNucleus == kU238)gBranchingRatio = gXsectionF;
+  else gBranchingRatio = gXsection[0];
 
-  gSection_Nn[8] = TGraph(18,energyGamma_9n,xSection_9n);
-  for (Int_t i=0;i<gSection_Nn[8].GetN();i++) gSection_Nn[8].GetY()[i] *= 0.1/9;
-  gSection_Nn[8].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[8].SetMarkerStyle(kOpenStar);
-  gSection_Nn[8].SetMarkerColor(kBlack);
+  Double_t mean; 
+  Double_t width = 0;
+  Double_t integral;
+  Double_t energyValue;
+  Double_t probValue;  
+  hBranchingRatioMap = new TH2D("hBranchingRatioMap","hBranchingRatioMap",gBranchingRatio.GetN()-1,gBranchingRatio.GetX(),50,0,50);
+  for(Int_t i = 0; i<hBranchingRatioMap->GetNbinsX(); i++){
+    energyValue = hBranchingRatioMap->GetXaxis()->GetBinCenter(i+1);
+    if(energyValue > saturationEnergy) energyValue = saturationEnergy;
+    if(fNucleus == kU238)
+      mean = fitMeanFissionN->Eval(energyValue);
+    else{
+      mean = fitMeanNeutronN->Eval(energyValue);
+      width = fitWidthNeutronN->Eval(energyValue);
+      }
+    integral = 0;
+    for(Int_t j = 1; j<50; j++){
+      if(fNucleus == kU238)
+        probValue = TMath::Poisson(j,mean);
+      else{
+        if(j == 1 && energyValue < 2*neutronSepThr) probValue = 1.0;
+        else if(energyValue < j*neutronSepThr) probValue = 0.0;
+        else probValue = TMath::Gaus(j,mean,width,kTRUE);
+        }
+      
+      hBranchingRatioMap->SetBinContent(i+1,j+1,probValue);
+      integral+=probValue;
+      }
+    for(Int_t j = 1; j<50; j++)if(integral != 0)hBranchingRatioMap->SetBinContent(i+1,j+1,hBranchingRatioMap->GetBinContent(i+1,j+1)/integral);
+    }
   
-  gSection_Nn[9] = TGraph(16,energyGamma_10n,xSection_10n);
-  for (Int_t i=0;i<gSection_Nn[9].GetN();i++) gSection_Nn[9].GetY()[i] *= 0.01;
-  gSection_Nn[9].GetXaxis()->SetTitle("E_{#gamma} [MeV]");
-  gSection_Nn[9].SetMarkerStyle(kFullStar);
-  gSection_Nn[9].SetMarkerColor(10);
-
-  hSection_Nn = new TH1D[10];
-  for(Int_t i = 0; i<10; i++){
-    hSection_Nn[i] = TH1D(TString::Format("hSection_Nn%d",i)," ",gSection_Nn[i].GetN()-1,gSection_Nn[i].GetX());
-    for(Int_t iBin = 1; iBin <= hSection_Nn[i].GetNbinsX(); iBin++)hSection_Nn[i].SetBinContent(iBin,gSection_Nn[i].Eval(hSection_Nn[i].GetBinCenter(iBin)));
+  for(Int_t nNeutrons=1; nNeutrons<=10; nNeutrons++){  
+    Int_t startingPoint = 0;
+    if(gXsection[nNeutrons].GetN() == 0)startingPoint = 0;
+    else{ 
+      for(Int_t i = 0; gXsection[0].GetX()[i] < gXsection[nNeutrons].GetX()[gXsection[nNeutrons].GetN()-1]; i++) startingPoint = i+1;
+      if(fNucleus == kU238)
+        for(Int_t iPoint = 0; iPoint<gXsection[nNeutrons].GetN(); iPoint++)
+	  gXsection[nNeutrons].SetPoint(iPoint,gXsection[nNeutrons].GetX()[iPoint],gXsection[nNeutrons].GetY()[iPoint]+gXsection[0].Eval(gXsection[nNeutrons].GetX()[iPoint]));
+      }
+    for(Int_t iPoint = startingPoint; iPoint<gXsection[0].GetN(); iPoint++)
+      gXsection[nNeutrons].SetPoint(gXsection[nNeutrons].GetN(), gXsection[0].GetX()[iPoint], gXsection[0].GetY()[iPoint]*GetBR(gXsection[0].GetX()[iPoint],nNeutrons));
+      
+    }
+  //hBranchingRatioMap->Draw("COLZ");
+  
+  delete fitMeanFissionN;
+  
+  hXsection = new TH1D[11]; 
+  for(Int_t i = 0; i<=10; i++){
+    hXsection[i] = TH1D(TString::Format("hXsection%d",i)," ",gXsection[i].GetN()-1,gXsection[i].GetX());
+    for(Int_t iBin = 1; iBin <= hXsection[i].GetNbinsX(); iBin++)hXsection[i].SetBinContent(iBin,gXsection[i].Eval(hXsection[i].GetBinCenter(iBin)));
+    hXsection[i].SetDirectory(0);
     }
 
   if(fRunMode != kFlatMultiplicity && fRunMode != k1n1n){
     BuildHadronicInteractionProbabilityTable();
     BuildNucleusBreakupProbabilityTable();
+    //if(fProductionMode == kPhotonPomeron)
     BuildPhotonFluxModulationTables();
+    if(fProductionMode == kTwoPhoton)
+    BuildTwoPhotonFluxModulationTables();
     }
   InitQAhistograms();
+  
 }
-
 //______________________________________________________________________________
 void NeutronGenerator::BuildHadronicInteractionProbabilityTable()
 {
@@ -894,9 +991,9 @@ void NeutronGenerator::BuildHadronicInteractionProbabilityTable()
   Double_t probValue = 1.0;
   TString hadrModel = fHadronicIntModel == kHardSphere ? "Hard sphere":"Glauber";
   cout<<"Building hadronic interaction probability table for "<<hadrModel.Data()<<" model"<<endl;
+
   for(Double_t impactPar_value = nucleus_R; impactPar_value<=25.0; impactPar_value *= impactPar_delta){
     probValue = TMath::Exp(-1.0*HadronicInteractionProbability(impactPar_value));
-    //cout<<impactPar_value<<"  "<<HadronicInteractionProbability(impactPar_value)<<endl;
     gHadronicProbabilityTable->SetPoint(iStep++,impactPar_value,probValue);
     
     if(Int_t(iStep/1.91)%10 == 0){
@@ -910,7 +1007,7 @@ void NeutronGenerator::BuildHadronicInteractionProbabilityTable()
 Double_t NeutronGenerator::HadronicInteractionProbability(const Double_t impactPar)
 {
   Double_t prob_Handronic = 0.0;
-  if(fHadronicIntModel == kHardSphere)prob_Handronic = impactPar<2*1.2*TMath::Power(nucleus_A,1.0/3) ? 1e20 : 0;
+  if(fHadronicIntModel == kHardSphere)prob_Handronic = impactPar<2*nucleus_R ? 1e20 : 0;
 
   if(fHadronicIntModel == kGlauber){
     Double_t nucleus_WSSD = 0.535; //Woods-saxon skin depth
@@ -932,30 +1029,152 @@ Double_t NeutronGenerator::HadronicInteractionProbability(const Double_t impactP
         nuclearThickness_value = 0.0;
         for (Double_t Z_value = RZ_delta/2; Z_value <= maxDistance; Z_value+=RZ_delta) nuclearThickness_value += 1.0/(1.0+TMath::Exp((TMath::Sqrt(R_value*R_value+Z_value*Z_value)-nucleus_R)/nucleus_WSSD));
         nuclearThickness_value *= 2.0*RZ_delta;
+	//cout<<"R = "<<R_value<<" thickness = "<<nuclearThickness_value<<endl;
+	
         nuclearThickness_norm += (R_value+RZ_delta)*nuclearThickness_value*RZ_delta*2.0*pi;
         nuclearThickness_value *= nucleus_A;
         gNuclearThickness->SetPoint(nPoint++,R_value,nuclearThickness_value);
+	
         }
        for (Int_t i=0; i<gNuclearThickness->GetN(); i++) gNuclearThickness->GetY()[i] *= 1.0/nuclearThickness_norm; 
       //gNuclearThickness->Draw();
       }
-    
     prob_Handronic = 0.0;
     Double_t XY_delta = 0.05;
 
     if(impactPar > 25.0) return prob_Handronic;
     for(Double_t Y_value = XY_delta/2; Y_value <= maxDistance; Y_value += XY_delta){
-      for(Double_t X_value = -maxDistance; X_value <= maxDistance; X_value += XY_delta){
+      for(Double_t X_value = -maxDistance+XY_delta/2; X_value <= maxDistance; X_value += XY_delta){
         Double_t dist_bR = TMath::Sqrt((impactPar-X_value)*(impactPar-X_value)+Y_value*Y_value);
         Double_t dist_R = TMath::Sqrt(X_value*X_value+Y_value*Y_value);
         if(dist_bR >= maxDistance || dist_R >= maxDistance) continue;
-        //cout<<dist_bR<<" "<<gNuclearThickness->Eval(dist_bR)<<" "<<dist_R<<" "<<gNuclearThickness->Eval(dist_R)<<endl;
 
         prob_Handronic += 2.0*gNuclearThickness->Eval(dist_bR)*(1.0-TMath::Exp(-xSection_IntNN*gNuclearThickness->Eval(dist_R)))*XY_delta*XY_delta;
         }
       }
     }
   return prob_Handronic;
+}
+//______________________________________________________________________________
+Double_t *NeutronGenerator::MakeReggeParametrization(Double_t startEnergy, Int_t nPoints){
+
+  Double_t *xsPoints = new Double_t[2*nPoints+1];
+  xsPoints[0] = nPoints;
+
+  //Regge parameters
+  Double_t x=0,y=0,eps=0,eta=0,em=0,exx=0,s=0,ictr=0,pom=0,vec=0;
+  x = 0.0677;
+  y = 0.129;
+  eps = 0.0808;
+  eta = 0.4525;
+  em = 0.94;
+  exx = TMath::Power(10,0.05);
+
+  //Regge model for high energy
+  s = 0.002*em*startEnergy;
+  for ( Int_t j = 1; j <= nPoints; j++ ) {
+    s *= exx;
+    pom = x*TMath::Power(s,eps);
+    vec = y*TMath::Power(s,(-eta));
+  
+    xsPoints[2*j-1] = 1000.0*0.5*(s-em*em)/em;
+    xsPoints[2*j] = 0.1*0.65*nucleus_A*(pom+vec);
+    }
+  return xsPoints;
+}
+//______________________________________________________________________________
+void NeutronGenerator::InsertDataset(TGraph& graph, Double_t *dataset){
+
+  for(Int_t i = 1; i<=dataset[0]; i++){
+    InsertPoint(graph,dataset[2*i-1],dataset[2*i]);
+  }
+  delete [] dataset;
+}
+//______________________________________________________________________________
+void NeutronGenerator::InsertPoint(TGraph& graph, Double_t x, Double_t y){
+
+  Bool_t inserted = kFALSE;
+  if(graph.GetN() != 0){
+    if(graph.GetX()[0] > x){
+      for(Int_t j = graph.GetN(); j>0; j--)graph.SetPoint(j,graph.GetX()[j-1],graph.GetY()[j-1]);
+        graph.SetPoint(0,x,y);
+        inserted = kTRUE;
+      }
+    else{
+      for(Int_t i = 1; i<graph.GetN(); i++){
+        if(graph.GetX()[i-1] < x && graph.GetX()[i] >= x){
+          for(Int_t j = graph.GetN(); j>i; j--)graph.SetPoint(j,graph.GetX()[j-1],graph.GetY()[j-1]);
+	  if(graph.GetX()[i] == x) x -= 1e-6;
+          graph.SetPoint(i,x,y);
+          inserted = kTRUE;
+          break;
+          }
+        }
+      }
+    }
+  if(!inserted)graph.SetPoint(graph.GetN(),x,y); 
+}
+//______________________________________________________________________________
+Double_t *NeutronGenerator::ReadXSFile(const char *filename, Double_t scale){
+
+  TString fullFileName = fDataPath;
+  fullFileName += filename;
+
+  std::string newLine;
+  TString token;
+  Ssiz_t from = 0;
+  Ssiz_t pos = 0;
+  UInt_t nPoints = 0; 
+  
+  ifstream infile(gSystem->ExpandPathName(fullFileName.Data()));
+  
+  while(getline(infile,newLine)){
+    TString lineString = newLine;
+    if(lineString.Contains("#") || lineString.IsWhitespace())continue;
+    nPoints++;
+    }
+  infile.clear();
+  infile.seekg(0, ios::beg);
+  
+  Double_t *xsPoints = new Double_t[2*nPoints+1];
+  xsPoints[0] = nPoints;
+
+  nPoints = 1;
+  while(getline(infile,newLine)){
+    TString lineString = newLine;
+    if(lineString.Contains("#") || lineString.IsWhitespace())continue;
+    from = 0;
+    while (lineString.Tokenize(token, from, "[|]")){
+      do{ 
+        pos = token.Index("\t");
+	if(pos >= 1)token.Replace(pos, 1, " ", 1);
+	}
+	while(pos >= 1);
+        xsPoints[nPoints++] = token.Atof();
+      }
+  }
+  Int_t fileNucleusA = 1;
+  TString fileString = filename;
+  //cout<<fileString.Data()<<endl;
+  //for(Int_t i = 1; i<=xsPoints[0]; i++)cout<<xsPoints[2*i-1]<<" "<<xsPoints[2*i]<<endl;
+  from = 0;
+  while (fileString.Tokenize(token, from, "[_]")){
+    if(token.IsFloat()){
+      fileNucleusA = token.Atoi();
+      break;
+      }
+    }
+  //Scaling by A, conversion to fm
+  for(Int_t i = 1; i<=xsPoints[0]; i++){
+    xsPoints[2*i] *= scale;
+    if(xsPoints[2*i] < 0)xsPoints[2*i-1] = 0;
+    }
+  if(fileNucleusA == 1) for(Int_t i = 1; i<=xsPoints[0]; i++)xsPoints[2*i] *= 0.1*nucleus_Z;
+  else if(fileNucleusA == 2) for(Int_t i = 1; i<=xsPoints[0]; i++)xsPoints[2*i] *= 0.1*(nucleus_A-nucleus_Z);
+  
+  else for(Int_t i = 1; i<=xsPoints[0]; i++)xsPoints[2*i] *= 0.1*((Float_t)nucleus_A/(Float_t)fileNucleusA);
+  
+  return xsPoints;
 }
 //______________________________________________________________________________
 void NeutronGenerator::InitQAhistograms(){
@@ -993,7 +1212,7 @@ void NeutronGenerator::InitQAhistograms(){
   
   hEnergyBin = CreateHist1D("hEnergyBin","Bin of the ENDF 2D hist used for energy generation",140,0,140,"Bin","Counts");
   fQAhistList->Add(hEnergyBin);
-  hEnergyForNeutronMulti = CreateHist1D("hEnergyForNeutronMulti","hEnergyForNeutronMulti",624,energyGamma_Xn,"Energy [MeV]","Counts");
+  hEnergyForNeutronMulti = CreateHist1D("hEnergyForNeutronMulti","hEnergyForNeutronMulti",gXsection[0].GetN()-1,gXsection[0].GetX(),"Energy [MeV]","Counts");
   fQAhistList->Add(hEnergyForNeutronMulti);
   
   hRapidityVM = CreateHist1D("hRapidityVM","Rapidity of VM used in event generation",1000,-10,10,"Rapidity","Counts");
@@ -1002,13 +1221,68 @@ void NeutronGenerator::InitQAhistograms(){
   fQAhistList->Add(hMassVM);
   
   if(fRunMode != kFlatMultiplicity && fRunMode != k1n1n){
-    hPhotonK = CreateHist1D("hPhotonK","Virtual photon k=0.5*M_{VM}*exp(y_{VM}) used in event generation",nSteps_Energy-1,gPhotonFluxTable[0].GetX(),"k [GeV/c]","Counts");
+    if(fProductionMode == kPhotonPomeron) 
+      hPhotonK = CreateHist1D("hPhotonK","Virtual photon k=0.5*M_{VM}*exp(y_{VM}) used in event generation",nSteps_Energy-1,gPhotonFluxTable[0].GetX(),"k [GeV/c]","Counts");
+    if(fProductionMode == kTwoPhoton){
+      Double_t energy_min = 0.5*fMassMin*TMath::Exp(-TMath::Max(TMath::Abs(fRapMin), TMath::Abs(fRapMax))); 
+      Double_t energy_max = 0.5*fMassMax*TMath::Exp(TMath::Max(TMath::Abs(fRapMin), TMath::Abs(fRapMax))); 
+      hPhotonK = CreateHist1D("hPhotonK","Virtual photon k=0.5*M_{VM}*exp(y_{VM}) used in event generation",10*nSteps_GG,energy_min,energy_max,"k [GeV/c]","Counts");
+      }
     fQAhistList->Add(hPhotonK);
     }
     
   hProbabilityXn = CreateHist1D("hProbabilityXn","Single side probability of Xn",1000,0,1,"Probability","Counts");
   fQAhistList->Add(hProbabilityXn);
+  
+  fImpProfile = new TGraph[10];
 
+}
+//______________________________________________________________________________
+void NeutronGenerator::SetBeamParameters(Int_t nuclZ, Int_t nuclA, Double_t gamma)
+{
+  if(nuclZ == 82 && nuclA == 208)SetBeamParameters(kPb208, gamma);
+  if(nuclZ == 79 && nuclA == 197)SetBeamParameters(kAu197, gamma);
+  if(nuclZ == 92 && nuclA == 238)SetBeamParameters(kU238, gamma);
+  if(nuclZ == 54 && nuclA == 129)SetBeamParameters(kXe129, gamma);
+}
+//______________________________________________________________________________
+void NeutronGenerator::SetBeamParameters(Nucleus_t nucleus, Double_t gamma)
+{
+  beamGamma = gamma;
+  gammaTarget = 2.0*beamGamma*beamGamma-1.0;
+  fNucleus = nucleus;
+  
+  cout<<"nOOn setup for ";
+  
+  if(nucleus == kPb208){
+    nucleus_Z = 82; 
+    nucleus_A = 208;
+    neutronSepThr = 7.4;
+    nucleus_R = 6.624;
+    cout<<"Pb208 beam with gamma = ";
+    }
+  if(nucleus == kAu197){
+    nucleus_Z = 79; 
+    nucleus_A = 197;
+    neutronSepThr = 8.1;
+    nucleus_R = 6.38;
+    cout<<"Au197 beam with gamma = ";
+    } 
+  if(nucleus == kU238){
+    nucleus_Z = 92; 
+    nucleus_A = 238;
+    neutronSepThr = 6.152;
+    nucleus_R = 6.624;    //FIXME: This is from Pb208 
+    cout<<"U238 beam with gamma = ";
+    }
+  if(nucleus == kXe129){
+    nucleus_Z = 54; 
+    nucleus_A = 129;
+    neutronSepThr = 9.05;
+    nucleus_R = 5.36;
+    cout<<"Xe129 beam with gamma = ";
+    }
+  cout<<TString::Format("%.1f",beamGamma)<<endl;  
 }
 //______________________________________________________________________________
 void NeutronGenerator::LoadENDF(const char *filename,const char *histname)
@@ -1019,7 +1293,7 @@ void NeutronGenerator::LoadENDF(const char *filename,const char *histname)
   fENDFFile->Close();
 }
 //______________________________________________________________________________
-void NeutronGenerator::ReadENDF(Bool_t saveToFile)
+void NeutronGenerator::ReadENDF(const char *filename, Bool_t saveToFile)
 {
   std::string newLine;
   TString token;
@@ -1029,9 +1303,11 @@ void NeutronGenerator::ReadENDF(Bool_t saveToFile)
   TString energy;
   Double_t energyPhoton = 0;
   Double_t energyNeutron = 0, probability = 0; 
-    
-  //"Intepreted" ENDF file from https://www-nds.iaea.org/exfor/endf.htm
-  ifstream infile("ENDF_Pb208.txt");
+  
+  TString fullFileName = fDataPath;
+  fullFileName += filename;
+  
+  ifstream infile(gSystem->ExpandPathName(fullFileName.Data()));
   
   Int_t counterPhE = 0;
   while(getline(infile,newLine)){
@@ -1128,6 +1404,28 @@ void NeutronGenerator::ReadENDF(Bool_t saveToFile)
     fENDFFile->Close();
     }
 }
+
+/*/
+if(fRunMode == kStarlightAscii){
+      TLorentzVector totgen, genpart;
+      totgen.SetXYZM(0.0,0.0,0.0,0.0);
+      std::string newLine;
+      do{ 
+        getline(fInputStarlightAscii,newLine);
+	lineString = newLine;
+	if(!lineString.Contains("EVENT"))fOutputStarlightAscii<<newLine<<endl;
+	if(lineString.Contains("TRACK")){ 
+          TObjArray *splitLine = lineString.Tokenize(" ");
+	  genpart.SetXYZM(((TObjString*)splitLine->At(2))->String().Atof(), ((TObjString*)splitLine->At(3))->String().Atof(),
+	  ((TObjString*)splitLine->At(4))->String().Atof(), pdgData.GetParticle(((TObjString*)splitLine->At(8))->String().Atoi())->Mass());
+	  totgen += genpart;
+	  } 
+	}while(!lineString.Contains("EVENT"));
+      VMmass = totgen.M();
+      VMrapidity = totgen.Rapidity();
+      }
+
+/*/
 //________________________________________________________________________
 TH1D* NeutronGenerator::CreateHist1D(const char* name, const char* title,Int_t nBins, Double_t xMin, Double_t xMax, const char* xLabel, const char* yLabel)
 {
